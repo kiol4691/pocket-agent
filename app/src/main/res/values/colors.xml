@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ===== official DeepSeek Harness dark-theme tokens (design-platform.css) ===== -->
+    <!-- surfaces -->
+    <color name="bg_base">#151517</color>   <!-- bluish-950 -->
+    <color name="layer1">#232324</color>    <!-- bluish-875 -->
+    <color name="layer2">#2C2C2E</color>    <!-- bluish-850 -->
+    <color name="layer3">#353536</color>    <!-- bluish-800 -->
+    <color name="sidebar">#1B1B1C</color>   <!-- bluish-900 -->
+    <!-- labels -->
+    <color name="text_primary">#F9FAFB</color>      <!-- bluish-50 -->
+    <color name="text_secondary">#CFD3D6</color>    <!-- bluish-300 -->
+    <color name="text_tertiary">#ADB2B8</color>     <!-- bluish-400 -->
+    <color name="text_caption">#81858C</color>      <!-- bluish-600 -->
+    <!-- brand / status -->
+    <color name="brand">#679EFE</color>                  <!-- deepseek-400 -->
+    <color name="brand_tertiary">#34415B</color>         <!-- deepseek-800 -->
+    <color name="on_brand">#FFFFFF</color>
+    <color name="accent_green">#4ED17E</color>          <!-- green-400 -->
+    <color name="accent_green_dark">#23402C</color>
+    <color name="accent_red">#F25A5A</color>            <!-- red-400 -->
+    <color name="accent_red_dark">#3A2020</color>
+    <!-- specific components -->
+    <color name="bubble_user_bg">#2C2C2E</color>        <!-- specific-bubble = bluish-850 -->
+    <color name="bubble_user_text">#F9FAFB</color>
+    <color name="code_bg">#1B1B1C</color>               <!-- markdown-code-block = bluish-900 -->
+    <color name="code_banner">#2C2C2E</color>           <!-- markdown-banner = bluish-850 -->
+    <color name="inline_code_bg">#2C2C2E</color>
+    <color name="input_major">#2C2C2E</color>           <!-- specific-input-major = bluish-850 -->
+    <color name="tool_bg">#232324</color>               <!-- layer1 -->
+    <color name="tool_text">#CFD3D6</color>             <!-- bluish-300 -->
+    <color name="tool_header">#F9FAFB</color>           <!-- label-primary -->
+    <!-- borders (white alphas) -->
+    <color name="border_light">#0FFFFFFF</color>        <!-- white/0.06 -->
+    <color name="border">#1FFFFFFF</color>              <!-- white/0.12 -->
+    <color name="border_strong">#29FFFFFF</color>       <!-- white/0.16 -->
+    <color name="hover_overlay">#14FFFFFF</color>       <!-- white/0.08 -->
+    <!-- legacy aliases -->
+    <color name="colorPrimary">@color/brand</color>
+    <color name="colorPrimaryDark">@color/brand</color>
+    <color name="surface">@color/bg_base</color>
+    <color name="panel">@color/layer1</color>
+    <color name="card">@color/layer2</color>
+    <color name="text_on_brand">@color/on_brand</color>
+    <color name="bubble_user">@color/bubble_user_bg</color>
+    <color name="bubble_assistant">@color/bg_base</color>
+    <color name="bubble_assistant_text">@color/text_primary</color>
+    <color name="tool_panel">@color/tool_bg</color>
+    <color name="topbar">@color/bg_base</color>
+    <color name="topbar_text">@color/text_primary</color>
+    <color name="ic_launcher_background">#679EFE</color>
+</resources>
