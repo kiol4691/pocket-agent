@@ -81,4 +81,8 @@
     <string name="keepalive_text">智能体回合与本地网页服务保持可用</string>
     <string name="keepalive_label">后台保活</string>
     <string name="keepalive_sub">前台服务：防止系统冻结 App 与本地部署的服务</string>
+    <string name="notif_perm_title">需要通知权限</string>
+    <string name="notif_perm_msg">后台保活依赖一条常驻通知。请允许 Pocket Agent 发送通知，授权后将自动开启。</string>
+    <string name="notif_perm_open">去开启</string>
+    <string name="keepalive_on">后台保活已开启</string>
 </resources>

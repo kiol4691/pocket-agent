@@ -81,4 +81,8 @@
     <string name="keepalive_text">Agent turns and local web servers stay alive</string>
     <string name="keepalive_label">Keep alive in background</string>
     <string name="keepalive_sub">Foreground service: prevents the system from freezing the app and locally deployed servers</string>
+    <string name="notif_perm_title">Notification permission needed</string>
+    <string name="notif_perm_msg">Background keep-alive relies on a persistent notification. Please allow Pocket Agent to send notifications, then it will be enabled automatically.</string>
+    <string name="notif_perm_open">Open settings</string>
+    <string name="keepalive_on">Keep-alive enabled</string>
 </resources>
