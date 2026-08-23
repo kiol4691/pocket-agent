@@ -17,6 +17,10 @@ public final class StrReplaceEditorTool implements Tool {
 
     private static final String ROOT = "/root/workspace";
     private static final int DEFAULT_MAX_OUTPUT_CHARS = 16000;
+    private static final String TRUNCATED_MESSAGE =
+            "<response clipped><NOTE>To save on context only part of this file has been shown to you. "
+                    + "You should retry this tool after you have searched inside the file with `grep -n` "
+                    + "in order to find the line numbers of what you are looking for.</NOTE>";
 
     private final Path workspace;
 
@@ -63,11 +67,19 @@ public final class StrReplaceEditorTool implements Tool {
         params.put("properties", props);
         params.put("required", new JSONArray().put("command").put("path"));
         return Tool.function("str_replace_editor",
-                "View, create, replace and insert text in files inside the agent workspace (/root/workspace). "
-                        + "Paths are absolute guest paths under /root/workspace. This is the preferred way to read and edit "
-                        + "source files: first use view to inspect the exact text, then use str_replace with a unique old_str "
-                        + "(old_str must match exactly and appear only once; otherwise it fails). Files made here also appear "
-                        + "in the persistent bash shell at their guest path.",
+                "Custom editing tool for viewing, creating and editing files\n"
+                        + "* Files live under /root/workspace; pass absolute paths starting with /root/workspace\n"
+                        + "* If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, "
+                        + "`view` lists its non-hidden entries with sizes\n"
+                        + "* The `create` command cannot be used if the specified `path` already exists as a file\n"
+                        + "* If a `command` generates a long output, it will be truncated and marked with `<response clipped>`\n"
+                        + "\n"
+                        + "Notes for using the `str_replace` command:\n"
+                        + "* The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. "
+                        + "Be mindful of whitespaces!\n"
+                        + "* If the `old_str` parameter is not unique in the file, the replacement will not be performed. "
+                        + "Make sure to include enough context in `old_str` to make it unique\n"
+                        + "* The `new_str` parameter should contain the edited lines that should replace the `old_str`",
                 params);
     }
 
@@ -137,7 +149,7 @@ public final class StrReplaceEditorTool implements Tool {
             sb.setLength(maxChars);
             clipped = true;
         }
-        if (clipped) sb.append("\n…[output truncated, file line count: ").append(total).append("]");
+        if (clipped) sb.append('\n').append(TRUNCATED_MESSAGE);
         String out = sb.toString().trim();
         return out.isEmpty() ? "(file is empty, " + total + " lines)" : out;
     }

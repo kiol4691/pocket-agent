@@ -2,6 +2,18 @@
 
 本机不装 git（UOS 精简源），项目以 tar.gz 归档到 `/media/deepin/_dde_data/dsh-android-*.tar.gz`。
 
+## 2026-08-23 改进批（构建通过，真机验证待做）
+
+- **环境重建**：新机无 JDK/SDK → Temurin 21.0.12.1 装 `/opt/jdk-21`；SDK cmdline-tools + platforms;android-35 + build-tools;35.0.0 + platform-tools 装 `~/Android`（与 local.properties 一致）；~/.bashrc 已写 JAVA_HOME/ANDROID_HOME。Gradle 8.13 走腾讯镜像（wrapper 已配）。
+- **✅ Think 卡按时间线交错**（清掉 2026-08-20 遗留）：`onToolStart` 里 `finishThinking()` 后调新增 `resetThinkFields()`（thinkRow/Body/Summary/Chevron/Open/Done/Text 全置空，endTurn 复用同一方法）→ 下一迭代 reasoning 建新 Think 卡、位置在上一工具卡之后。每卡私有 buf/open/done 捕获（16:5x 的修复）保证旧卡展开仍读自己内容。
+- **✅ 停止按钮真正中断长跑 bash**：`ProrootRuntime.abortWork()`=killPersistentBash（杀 setsid 进程组+关 stdin）；reader 线程 EOF → pbDone=true → runBashPersistent 立即返回 "[persistent shell exited…]" → AgentLoop 下个边界看到 cancel → onFinished("(cancelled)")。MainActivity stop 分支 `new Thread(abortWork)`（不能 post 到单线程 executor——工具正占着它）。StrReplaceEditorTool 纯 Java 无需中断。
+- **✅ 顶栏标题=当前会话标题**：wordmark 加 id `topTitle`；新指针 `currentSessionFile`（显示用，区别于 activeSession=续写用，避免破坏"合并全部文件"记忆设计）；loadLatest/switch/startAgent 新建分支维护它，resetSession/startNewChat 清空；`refreshTopTitle()`=sessionTitle(current) 或 app 名。
+- **✅ 侧栏高亮改用 currentSessionFile**：新会话首轮发送后（此前 activeSession=null 无高亮），最新文件正确高亮。
+- **✅ 工具行 Running 动画 + pill 收尾**：pillTick 每 450ms 循环 "Running/./../..."（startPillAnimation 在 onToolStart、stopPillAnimation 在 onToolResult/endTurn/onError/onFinished）；onError 把未决 pill 置 Failed 红、onFinished("(cancelled)") 置 Stopped 灰（settlePendingTool 用 startsWith("Running") 判定，避开动画中间态）。strings 新增 `pill_running_base`=Running。
+- 冷构建通过：app-debug.apk 36,247,117B；asset ubuntu-base-arm64.bin 完好（29870567）。
+- 待真机：多轮工具回合 Think 卡逐轮出现且交错；长 sleep 中点停止→秒回 "Stopped"；顶栏标题随会话切换/新建更新。
+
+
 ## 2026-08-20 官方 Harness UI 全面对齐（核心对话全套，已完成构建，真机验证待值守）
 
 - 参考源码：`/home/deepin/Downloads/deepseek-harness-master.zip`（解压在 `/tmp/opencode/offh/deepseek-harness-master/`，UI 主要在 `packages/client/ui-*` 与 `apps/web`）。`examples/jsonrpc-agent/minimal.cordis.yml` 即本项目 minimal 模式的官方来源。
@@ -81,7 +93,7 @@
 
 ## 架构
 - 入口 `MainActivity.java`：顶栏 Setup/Test/Settings；底部消息输入 + 发送；会话存 `files/sessions/<yyyyMMdd-HHmmss>.jsonl`；**启动时若 runtime 未就绪自动后台安装（`autoSetup()`），无需手动点 Setup**（Setup 按钮保留手动重装）
-- `AgentLoop`：系统提示 + 历史 + 任务 → 流式 chat → tool_calls 执行 → 结果回灌，最多 30 轮，历史尾截 40 条。**记忆=合并全部 session 文件（按文件名时间序）**，因每次发送都新建一个 jsonl，若只读最新文件则模型只能记得上一次对话（真机证实"没记忆"）；另剔除历史尾部中断的 tool_calls/tool 消息防止 API 422
+- `AgentLoop`：系统提示 + 历史 + 任务 → 流式 chat → tool_calls 执行 → 结果回灌，最多 30 轮，历史尾截 40 条。**真多会话（2026-08-23）**：每个 jsonl=一个独立会话；activeSession 非空→只 load 该文件续写；新对话首条消息才建文件并当场绑定 activeSession（后续发送同文件追加）；跨文件记忆已按用户要求移除（latestSessionHistory 删除）。历史尾部中断的 tool_calls/tool 消息仍剔除防 API 422
 - `DeepSeekClient`：OpenAI 兼容流式；base_url/model 在 `shared_prefs/settings.xml`，api_key 用 `SecretStore`（Android Keystore AES-GCM，`shared_prefs/secrets.xml`）
 - 工具：**极简模式（minimal.cordis.yml）复刻**：`BashTool`（proroot+Ubuntu 内**持久化 bash 会话**：单一长驻 bash，cwd/env/装的包跨调用保持，相对路径优先；超时上限 30min）＋ `StrReplaceEditorTool`（Aider 式 `str_replace_editor`：view/create/str_replace/insert，绝对路径 `/root/workspace/...`，view_range 1-based/-1=EOF，old_str 必须唯一，默认 maxOutputChars 16000）。原 `FilesystemTool`/`TodoTool` 已从注册移除（类保留）。持久化实现：`ProrootRuntime.runBashPersistent`/`ensurePersistentBash`/`startPersistentReader`，每次写命令+随机 marker 行 `echo "__DSH_RC_<hex>__=$?"`，reader 读到 marker 即返回该段输出；超时杀整个 setsid 进程组并下次调用懒重启
 - `ProrootRuntime`：从 `nativeLibraryDir`（`/data/app/.../lib/arm64`，类型 `apk_data_file`）exec 5 个 `libproroot*.so`；`-b host:guest`、`-w /root/workspace`；`setsid` + pidfile 以便超时杀进程组
@@ -92,7 +104,7 @@
 ## 已踩坑（务必记住）
 1. Android 10+ W^X：不能 exec `app_data_file`（app 数据目录），只能从 APK native lib 目录 exec
 2. apt dists 路径用**代号** `noble`，不是 `24.04`（后者全 404）
-3. proroot 内 UDP DNS 不通但 TCP 通 → hosts 写死 `ports.ubuntu.com`/`archive.ubuntu.com` 的 IP
+3. proroot 内 DNS 实测（2026-08-23）：**UDP 53 到 223.5.5.5/119.29.29.29 是通的，8.8.8.8 超时**（大陆网络常态）；resolv.conf 已去 8.8.8.8、加 114.114.114.114 + `options timeout:2 attempts:2 rotate`。另有双保险：`runtime/LocalProxy.java`=应用内 HTTP/CONNECT 代理监听 127.0.0.1:7899（proroot 共享网络栈 guest 可直连），ProrootRuntime.ensureNetTuning() 每进程一次写入 rootfs：resolv.conf/apt 99-dsh-proxy/pip.conf/profile.d/dsh-proxy.sh/root/.gitconfig(标记 dsh-local-proxy)，并把 http(s)_proxy 注入 bash env——apt/pip/git/curl/wget 即使 DNS 全挂也走代理解析。真机验证：CONNECT 隧道 200、经代理 http ports.ubuntu.com 200；example.com/neverssl.com :80 不通属目标站点在大陆网络被阻，与桥无关
 4. 基础 rootfs 无 `libtinfo6`，bash 起不来 → bootstrap/自测用 `runSh`（dash）
 5. **Android `org.json` `optString` 遇 JSON `null` 返回字面字符串 `"null"`**（SiliconFlow 每轮结尾发 `"content":null` 块）→ 必须 `o.isNull(k) ? fallback : o.optString(k)`
 6. **流式 tool_call 后续分块带 `"name":""`/`"id":null` 会覆盖已攒的值** → 只在非空时才写入 accumulator

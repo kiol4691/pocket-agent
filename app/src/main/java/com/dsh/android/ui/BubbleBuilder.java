@@ -1,5 +1,7 @@
 package com.dsh.android.ui;
 
+import com.dsh.android.R;
+
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -91,6 +93,8 @@ public final class BubbleBuilder {
         List<Block> blocks = new ArrayList<>();
         String[] lines = (md == null ? "" : md).split("\n", -1);
         int i = 0, n = lines.length;
+        int holdFrom = n - 1;
+        while (holdFrom >= 0 && lines[holdFrom].trim().isEmpty()) holdFrom--;
         StringBuilder prose = new StringBuilder();
         boolean hasProse = false;
 
@@ -101,6 +105,7 @@ public final class BubbleBuilder {
                 flushProse(blocks, prose, hasProse);
                 hasProse = false;
                 String lang = fence.group(2).trim();
+                String langLower = lang.toLowerCase(java.util.Locale.US);
                 StringBuilder code = new StringBuilder();
                 int j = i + 1;
                 while (j < n && !FENCE_END.matcher(lines[j].trim()).matches()) {
@@ -108,7 +113,11 @@ public final class BubbleBuilder {
                     code.append(lines[j]);
                     j++;
                 }
-                blocks.add(new Block(Kind.CODE, code.toString(), lang, null));
+                if (langLower.equals("math") || langLower.equals("latex") || langLower.equals("tex")) {
+                    blocks.add(new Block(Kind.PROSE, "$$\n" + code + "\n$$\n", null, null));
+                } else {
+                    blocks.add(new Block(Kind.CODE, code.toString(), lang, null));
+                }
                 i = j + 1;
                 continue;
             }
@@ -130,6 +139,9 @@ public final class BubbleBuilder {
                 blocks.add(new Block(Kind.TABLE, null, null, all));
                 i = j;
                 continue;
+            }
+            if (i >= holdFrom && trim.startsWith("|") && !isTableSeparator(trim)) {
+                break;
             }
             prose.append(lines[i]).append('\n');
             hasProse = true;
@@ -169,6 +181,7 @@ public final class BubbleBuilder {
             store = new Store();
             bubble.setTag(store);
         }
+        int preViews = store.views.size();
         int common = 0;
         while (common < store.kinds.size() && common < blocks.size()
                 && store.kinds.get(common) == blocks.get(common).kind) {
@@ -178,6 +191,11 @@ public final class BubbleBuilder {
             bubble.removeView(store.views.remove(store.views.size() - 1));
             store.kinds.remove(store.kinds.size() - 1);
         }
+        // A kind-equal prefix can still hide a re-segmentation: while streaming, the growing
+        // PROSE/CODE tail gets "peeled" once a table/fence completes inside it (old [P_big]
+        // becomes new [P_small, TABLE]). Nothing mismatches, yet the kept former-tail view
+        // must be re-rendered from its now-smaller block or stale raw markdown stays visible.
+        boolean peeled = preViews > 0 && common == preViews && blocks.size() > preViews;
         for (int i = common; i < blocks.size(); i++) {
             Block b = blocks.get(i);
             View v = buildView(ctx, b, style);
@@ -191,6 +209,9 @@ public final class BubbleBuilder {
         }
         renderInto(ctx, store.views.get(store.views.size() - 1),
                 blocks.get(blocks.size() - 1), style);
+        if (peeled) {
+            renderInto(ctx, store.views.get(preViews - 1), blocks.get(preViews - 1), style);
+        }
     }
 
     // ---------------------------------------------------------------- views
@@ -219,9 +240,9 @@ public final class BubbleBuilder {
             TextView copy = (TextView) ((LinearLayout) view).findViewById(0x44544143);
             String tag = (String) copy.getTag();
             if (tag != null && tag.equals(b.text)) {
-                copy.setText("⧉ 已复制");
+                copy.setText(ctx.getString(R.string.copy_copied));
             } else {
-                copy.setText("⧉ 复制");
+                copy.setText(ctx.getString(R.string.copy_code));
             }
             lang.setText(b.lang == null || b.lang.isEmpty() ? "code" : b.lang);
         }
@@ -276,7 +297,7 @@ public final class BubbleBuilder {
 
         TextView copy = new TextView(ctx);
         copy.setId(0x44544143);
-        copy.setText("⧉ 复制");
+        copy.setText(ctx.getString(R.string.copy_code));
         copy.setTextSize(11);
         copy.setTextColor(style.brand);
         copy.setPadding(dp(8), dp(4), dp(8), dp(4));
@@ -316,7 +337,7 @@ public final class BubbleBuilder {
             cm.setPrimaryClip(ClipData.newPlainText("code", code));
             copy.setText("⧉ 已复制");
             copy.setTag(code);
-            Toast.makeText(ctx, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, ctx.getString(R.string.copied_clipboard), Toast.LENGTH_SHORT).show();
         });
         return card;
     }

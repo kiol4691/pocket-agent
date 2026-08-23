@@ -48,6 +48,11 @@ public final class ProrootRuntime {
     private final File tmpDir;
     private final File nativeLibDir;
 
+    private static final String RESOLV_CONF =
+            "nameserver 223.5.5.5\nnameserver 119.29.29.29\nnameserver 114.114.114.114\n"
+                    + "options timeout:2 attempts:2 rotate\n";
+    private volatile boolean netTuned;
+
     public ProrootRuntime(Context context) {
         File filesDir = context.getFilesDir();
         this.runDir = new File(filesDir, "run");
@@ -132,6 +137,12 @@ public final class ProrootRuntime {
         }
     }
 
+    /** Abort an in-flight command: kill the persistent bash process group so the blocked
+     * caller returns immediately. The session restarts lazily on the next call. */
+    public void abortWork() {
+        killPersistentBash();
+    }
+
     private String runPersistentInternal(String command, long timeoutMs) throws IOException {
         if (command.trim().isEmpty()) return "Error: empty command";
         if (timeoutMs <= 0) timeoutMs = PB_DEFAULT_TIMEOUT_MS;
@@ -184,9 +195,79 @@ public final class ProrootRuntime {
                 + (text.isEmpty() ? "(no output)" : text);
     }
 
+    /** Start the loopback proxy and (once per process) tune the rootfs network files: CN-only
+     * DNS with fast retries, apt/pip/git proxy wiring, proxy env exports for the shell. */
+    private void ensureNetTuning() {
+        LocalProxy.ensure();
+        int p = LocalProxy.port();
+        if (netTuned || p <= 0) return;
+        java.nio.file.Path rcPath = new File(rootfsDir, "etc/resolv.conf").toPath();
+        try {
+            if (java.nio.file.Files.isSymbolicLink(rcPath)) {
+                java.nio.file.Files.delete(rcPath);
+            }
+        } catch (IOException ignored) {
+        }
+        writeIfChanged(new File(rootfsDir, "etc/resolv.conf"), RESOLV_CONF);
+        writeIfChanged(new File(rootfsDir, "etc/apt/apt.conf.d/99-dsh-proxy"),
+                "Acquire::http::Proxy \"http://127.0.0.1:" + p + "\";\n"
+                        + "Acquire::https::Proxy \"http://127.0.0.1:" + p + "\";\n");
+        writeIfChanged(new File(rootfsDir, "etc/pip.conf"),
+                "[global]\nproxy = http://127.0.0.1:" + p + "\n");
+        writeIfChanged(new File(rootfsDir, "etc/profile.d/dsh-proxy.sh"),
+                "export http_proxy=\"http://127.0.0.1:" + p + "\"\n"
+                        + "export https_proxy=\"http://127.0.0.1:" + p + "\"\n"
+                        + "export HTTP_PROXY=\"$http_proxy\"\n"
+                        + "export HTTPS_PROXY=\"$https_proxy\"\n"
+                        + "export no_proxy=\"localhost,127.0.0.1,::1\"\n"
+                        + "export NO_PROXY=\"$no_proxy\"\n");
+        File gitcfg = new File(rootfsDir, "root/.gitconfig");
+        try {
+            byte[] old = gitcfg.isFile()
+                    ? java.nio.file.Files.readAllBytes(gitcfg.toPath()) : new byte[0];
+            String cur = new String(old, java.nio.charset.StandardCharsets.UTF_8);
+            if (!cur.contains("dsh-local-proxy")) {
+                String body = cur
+                        + (cur.endsWith("\n") || cur.isEmpty() ? "" : "\n")
+                        + "# dsh-local-proxy\n"
+                        + "[http]\n\tproxy = http://127.0.0.1:" + p + "\n"
+                        + "[https]\n\tproxy = http://127.0.0.1:" + p + "\n";
+                gitcfg.getParentFile().mkdirs();
+                java.nio.file.Files.write(gitcfg.toPath(),
+                        body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (IOException ignored) {
+        }
+        netTuned = true;
+    }
+
+    private static void writeIfChanged(File f, String content) {
+        try {
+            f.getParentFile().mkdirs();
+            byte[] cur = f.isFile() ? java.nio.file.Files.readAllBytes(f.toPath()) : null;
+            if (cur == null || !content.equals(new String(cur, java.nio.charset.StandardCharsets.UTF_8))) {
+                java.nio.file.Files.write(f.toPath(), content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void addProxyEnv(java.util.Map<String, String> env) {
+        int p = LocalProxy.port();
+        if (p <= 0) return;
+        String px = "http://127.0.0.1:" + p;
+        env.put("http_proxy", px);
+        env.put("https_proxy", px);
+        env.put("HTTP_PROXY", px);
+        env.put("HTTPS_PROXY", px);
+        env.put("no_proxy", "localhost,127.0.0.1,::1");
+        env.put("NO_PROXY", "localhost,127.0.0.1,::1");
+    }
+
     /** Spawn the single persistent bash (setsid'd so the whole group can be killed on timeout). */
     private void ensurePersistentBash() throws IOException {
         if (!pbDead && pbProc != null && pbProc.isAlive()) return;
+        ensureNetTuning();
         ensureDirectories();
         File launcher = new File(nativeLibDir, "libproroot.so");
         if (!launcher.isFile()) throw new IOException("proroot not installed; run runtime setup first.");
@@ -236,6 +317,7 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        addProxyEnv(env);
 
         Process proc;
         try {
@@ -333,6 +415,7 @@ public final class ProrootRuntime {
     }
 
     private String runInternal(String command, long timeoutMs, String shell) throws IOException {
+        ensureNetTuning();
         ensureDirectories();
         File launcher = new File(nativeLibDir, "libproroot.so");
         if (!launcher.isFile()) throw new IOException("proroot not installed; run runtime setup first.");
@@ -388,6 +471,7 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        addProxyEnv(env);
 
         Process proc;
         try {

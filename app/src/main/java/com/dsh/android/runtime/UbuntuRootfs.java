@@ -170,7 +170,8 @@ public final class UbuntuRootfs {
         if (rc.exists() || java.nio.file.Files.isSymbolicLink(rc.toPath())) {
             rc.delete();
         }
-        IOUtil.writeText(rc, "nameserver 223.5.5.5\nnameserver 119.29.29.29\nnameserver 8.8.8.8\n");
+        IOUtil.writeText(rc, "nameserver 223.5.5.5\nnameserver 119.29.29.29\nnameserver 114.114.114.114\n"
+                + "options timeout:2 attempts:2 rotate\n");
 
         File sourcesListD = new File(rootfsDir, "etc/apt/sources.list.d");
         File ubuntuSources = new File(sourcesListD, "ubuntu.sources");

@@ -36,18 +36,24 @@ public final class BashTool implements Tool {
         params.put("properties", props);
         params.put("required", new JSONArray().put("command"));
         return Tool.function("bash",
-                "Run a bash command in the shared persistent Ubuntu Linux shell (proroot) as root. "
-                        + "IMPORTANT: the same long-lived shell is reused across calls, so state PERSISTS: "
-                        + "the working directory, exported variables, files and installed packages all carry over. "
-                        + "The shell starts in the workspace (/root/workspace); use relative paths in commands, and cd/export "
-                        + "as needed to steer state. "
-                        + "There are NO command restrictions: you may install any packages with apt-get install -y ... "
-                        + "(common tools and python3 are already installed by setup), use git, compile and run programs. "
-                        + "Phone storage: 'df -h /' always shows the phone's /data space; if All-Files-Access is granted, "
-                        + "the phone's shared storage is mounted at /sdcard (use df -h /sdcard or browse files there). "
-                        + "Use sed/python for edits on line ranges rather than huge-output commands, and avoid background "
-                        + "long-lived processes that keep writing to the terminal. Set a larger timeout_ms for long installs "
-                        + "or builds (up to 1800000).",
+                "Run commands in a bash shell\n"
+                        + "* When invoking this tool, the contents of the \"command\" parameter does NOT need to be XML-escaped.\n"
+                        + "* You have internet access in this environment: apt-get install, pip install, git clone and curl all work; "
+                        + "bash, coreutils, git, curl, wget, python3 and pip are preinstalled.\n"
+                        + "* State is persistent across command calls and discussions with the user: the working directory, "
+                        + "exported variables, files and installed packages carry over between calls. The shell starts in "
+                        + "/root/workspace; prefer relative paths there.\n"
+                        + "* To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.\n"
+                        + "* Please avoid commands that may produce a very large amount of output.\n"
+                        + "* Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.\n"
+                        + "* Deploying a web app: start the server detached with a log file, e.g. "
+                        + "'nohup python3 -m http.server 4680 --directory /root/workspace/site > /root/workspace/server.log 2>&1 &'.\n"
+                        + "* A backgrounded server keeps running across tool calls. Verify locally with "
+                        + "'curl -s --noproxy \"*\" http://127.0.0.1:<port>' (never use a proxy for localhost).\n"
+                        + "* Loopback ports are shared with Android: the site is openable in the phone browser at "
+                        + "http://127.0.0.1:<port> while the app is running.\n"
+                        + "* Phone storage: 'df -h /' shows the phone's /data partition; when All-Files-Access is granted, "
+                        + "the phone's shared storage is mounted at /sdcard.",
                 params);
     }
 

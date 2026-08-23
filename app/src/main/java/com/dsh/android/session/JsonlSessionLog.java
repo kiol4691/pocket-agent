@@ -28,8 +28,13 @@ public final class JsonlSessionLog {
         if (!sessionsDir.isDirectory() && !sessionsDir.mkdirs()) {
             throw new IOException("Cannot create session dir " + sessionsDir);
         }
-        String name = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date()) + ".jsonl";
-        this.file = new File(sessionsDir, name);
+        String base = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
+        File f = new File(sessionsDir, base + ".jsonl");
+        int n = 1;
+        while (f.exists()) {
+            f = new File(sessionsDir, base + "-" + (n++) + ".jsonl");
+        }
+        this.file = f;
     }
 
     /** Resume an existing session file: new messages append to it. */

@@ -82,11 +82,74 @@ public final class MarkdownRenderer {
                 .build();
     }
 
+    private static final java.util.regex.Pattern PAREN_LATEX = java.util.regex.Pattern
+            .compile("\\\\\\((.+?)\\\\\\)", java.util.regex.Pattern.DOTALL);
+    private static final java.util.regex.Pattern BRACKET_LATEX = java.util.regex.Pattern
+            .compile("\\\\\\[(.+?)\\\\\\]", java.util.regex.Pattern.DOTALL);
+    private static final java.util.regex.Pattern TEX_CMD = java.util.regex.Pattern
+            .compile("\\\\[a-zA-Z]{2,}");
+    private static final String[] TEX_STRONG = {
+            "\\frac", "\\dfrac", "\\tfrac", "\\sqrt", "\\sum", "\\prod", "\\int", "\\oint",
+            "\\lim", "\\begin{", "\\left", "\\overline", "\\underline", "\\vec{", "\\hat{",
+            "\\binom", "\\cases", "\\begin{align", "\\begin{equation"
+    };
+
+    /** Models often emit TeX with \\(..\\) / \\[..\\] delimiters; Markwon's latex plugin only
+     * parses $..$ / $$..$$. Rewrite the delimiters before rendering. */
+    private static String normalizeLatexDelimiters(String md) {
+        String s = PAREN_LATEX.matcher(md).replaceAll("\\$$1\\$");
+        return BRACKET_LATEX.matcher(s).replaceAll("\\$$$1\\$\\$");
+    }
+
+    /** Some models write formulas completely bare (no $, no fence). Detect standalone
+     * LaTeX-looking lines and wrap them as display math so they render. */
+    private static String wrapBareLatexLines(String md) {
+        String[] lines = md.split("\n", -1);
+        boolean inFence = false;
+        for (int i = 0; i < lines.length; i++) {
+            String raw = lines[i];
+            String t = raw.trim();
+            if (t.startsWith("```") || t.startsWith("~~~")) {
+                inFence = !inFence;
+                continue;
+            }
+            if (inFence || t.isEmpty() || t.contains("$") || t.contains("|")) continue;
+            char c0 = t.charAt(0);
+            if (c0 == '#' || c0 == '>' || c0 == '-' || c0 == '*' || c0 == '+') continue;
+            if (t.length() > 2 && Character.isDigit(c0) && t.charAt(1) == '.') continue;
+            if (looksLikeLatexLine(t)) lines[i] = "$$" + t + "$$";
+        }
+        StringBuilder sb = new StringBuilder(md.length() + 16);
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) sb.append('\n');
+            sb.append(lines[i]);
+        }
+        return sb.toString();
+    }
+
+    private static boolean looksLikeLatexLine(String t) {
+        for (String sig : TEX_STRONG) {
+            if (t.contains(sig)) return true;
+        }
+        boolean cmd = TEX_CMD.matcher(t).find();
+        boolean caret = t.contains("^");
+        boolean eqish = t.contains("=") || t.contains("≈") || t.contains("≠")
+                || t.contains("≤") || t.contains("≥")
+                || (t.contains("<") && t.length() > 2 && !t.startsWith("<"))
+                || (t.contains(">") && !t.endsWith(">"));
+        return (cmd && eqish) || (caret && eqish);
+    }
+
     public static CharSequence render(String md) {
-        return markwon.toMarkdown(md == null ? "" : md);
+        return markwon.toMarkdown(preprocess(md));
     }
 
     public static void setText(TextView textView, String md) {
-        markwon.setMarkdown(textView, md == null ? "" : md);
+        markwon.setMarkdown(textView, preprocess(md));
+    }
+
+    private static String preprocess(String md) {
+        String s = normalizeLatexDelimiters(md == null ? "" : md);
+        return wrapBareLatexLines(s);
     }
 }
