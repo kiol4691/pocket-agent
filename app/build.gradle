@@ -6,6 +6,10 @@ android {
     namespace 'com.dsh.android'
     compileSdk 35
 
+    def ksProps = new Properties()
+    def ksFile = rootProject.file('keystore.properties')
+    if (ksFile.exists()) ksProps.load(new FileInputStream(ksFile))
+
     defaultConfig {
         applicationId "com.dsh.android"
         minSdk 26
@@ -14,10 +18,22 @@ android {
         versionName "0.1.0"
     }
 
+    signingConfigs {
+        release {
+            if (ksFile.exists()) {
+                storeFile rootProject.file(ksProps['storeFile'])
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (ksFile.exists()) signingConfig signingConfigs.release
         }
     }
 

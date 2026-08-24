@@ -5,7 +5,14 @@ local.properties
 *.iml
 .DS_Store
 app/src/main/jniLibs/arm64-v8a/libproroot*.so
+
 # local notes (never publish)
 AGENTS.md
+
+# unused flavor asset leftovers (101MB, no productFlavors reference)
 app/src/full/
 app/src/std/
+
+# release signing (never publish)
+keystore/
+keystore.properties
