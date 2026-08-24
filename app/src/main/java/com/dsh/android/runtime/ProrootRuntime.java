@@ -157,8 +157,14 @@ public final class ProrootRuntime {
             pbDone = false;
             pbWait = true;
             try {
+                // Group the command and detach its stdin: a child that reads stdin
+                // (adb pair, sudo, ssh, `read`, interactive prompts) would otherwise
+                // consume the queued marker echo and hang the call until timeout —
+                // and a long-lived child (adb fork-server) would eat every future
+                // marker, leaving all subsequent calls stuck "Running" forever.
+                pbIn.write("{\n");
                 pbIn.write(command);
-                pbIn.write("\n");
+                pbIn.write("\n} </dev/null\n");
                 pbIn.write("echo \"");
                 pbIn.write(pbMarker);
                 pbIn.write("\"=$?\n");
@@ -317,6 +323,10 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        // adb inside the sandbox is TCP-only and its mDNS/USB init can block; disable both.
+        env.put("ADB_MDNS", "0");
+        env.put("ADBD_MDNS", "0");
+        env.put("ADB_LIBUSB", "0");
         addProxyEnv(env);
 
         Process proc;
@@ -471,6 +481,9 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        env.put("ADB_MDNS", "0");
+        env.put("ADBD_MDNS", "0");
+        env.put("ADB_LIBUSB", "0");
         addProxyEnv(env);
 
         Process proc;
