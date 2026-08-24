@@ -21,7 +21,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -130,9 +129,6 @@ public final class MainActivity extends AppCompatActivity {
         drawerLayout = findViewById(R.id.drawerLayout);
         sessionList = findViewById(R.id.sessionList);
         MarkdownRenderer.init(this);
-        if (getSharedPreferences("settings", MODE_PRIVATE).getBoolean("keep_alive", false)) {
-            KeepAliveService.start(this);
-        }
 
         findViewById(R.id.btnMenu).setOnClickListener(v ->
                 drawerLayout.openDrawer(GravityCompat.START));
@@ -251,62 +247,11 @@ public final class MainActivity extends AppCompatActivity {
                 .show();
     }
 
-    private boolean pendingKeepAlive;
-
-    private boolean notificationsEnabled() {
-        android.app.NotificationManager nm =
-                (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        return nm == null || nm.areNotificationsEnabled();
-    }
-
-    private void promptNotificationPermission() {
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.notif_perm_title)
-                .setMessage(R.string.notif_perm_msg)
-                .setPositiveButton(R.string.notif_perm_open, (d, w) -> {
-                    if (android.os.Build.VERSION.SDK_INT >= 33) {
-                        requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 1001);
-                        return;
-                    }
-                    try {
-                        startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
-                    } catch (Exception e) {
-                        startActivity(new Intent(Settings.ACTION_SETTINGS));
-                    }
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    private void applyGrantedKeepAlive() {
-        pendingKeepAlive = false;
-        getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("keep_alive", true).apply();
-        KeepAliveService.start(this);
-        toast(getString(R.string.keepalive_on));
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 1001 && grantResults.length > 0) {
-            if (grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED
-                    && pendingKeepAlive) {
-                applyGrantedKeepAlive();
-            } else if (grantResults[0] != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                pendingKeepAlive = false;
-            }
-        }
-    }
-
     /** Re-check storage access when returning from the Settings grant. */
     @Override
     protected void onResume() {
         super.onResume();
         refreshRuntimeStatus();
-        if (pendingKeepAlive && notificationsEnabled()) {
-            applyGrantedKeepAlive();
-        }
     }
 
     private void autoSetup() {
@@ -377,11 +322,6 @@ public final class MainActivity extends AppCompatActivity {
         busy = b;
         sendIcon.setImageResource(b ? R.drawable.ic_stop : R.drawable.ic_send);
         send.setAlpha(b ? 0.92f : 1f);
-        if (b) {
-            KeepAliveService.start(this);
-        } else if (!getSharedPreferences("settings", MODE_PRIVATE).getBoolean("keep_alive", false)) {
-            KeepAliveService.stop(this);
-        }
     }
 
     private void startAgent(String task) {
@@ -1242,45 +1182,6 @@ public final class MainActivity extends AppCompatActivity {
         change.setOnClickListener(v -> showModelMenu());
         modelArea.addView(change, chp);
         layout.addView(modelArea);
-
-        final Switch sw = new Switch(this);
-        sw.setChecked(s.getBoolean("keep_alive", false));
-        sw.setOnCheckedChangeListener((b, checked) -> {
-            if (checked && !notificationsEnabled()) {
-                // Gate keep-alive on the persistent-notification permission: without it the
-                // foreground service runs invisibly on API 33+ and users think it is broken.
-                sw.setChecked(false);
-                pendingKeepAlive = true;
-                promptNotificationPermission();
-                return;
-            }
-            getSharedPreferences("settings", MODE_PRIVATE).edit()
-                    .putBoolean("keep_alive", checked).apply();
-            if (checked) {
-                KeepAliveService.start(MainActivity.this);
-            } else if (!busy) {
-                KeepAliveService.stop(MainActivity.this);
-            }
-        });
-
-        LinearLayout kaRow = new LinearLayout(this);
-        kaRow.setOrientation(LinearLayout.HORIZONTAL);
-        kaRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView kaLabel = tvGlyph(getString(R.string.keepalive_label), 14, R.color.text_primary);
-        kaLabel.setOnClickListener(v -> sw.setChecked(!sw.isChecked()));
-        kaRow.addView(kaLabel, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        kaRow.addView(sw);
-        LinearLayout.LayoutParams kp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        kp.topMargin = dp(18);
-        layout.addView(kaRow, kp);
-
-        TextView kaSub = tvGlyph(getString(R.string.keepalive_sub), 11, R.color.text_caption);
-        LinearLayout.LayoutParams ksp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        ksp.topMargin = dp(2);
-        layout.addView(kaSub, ksp);
 
         new AlertDialog.Builder(this)
                 .setTitle(R.string.settings)

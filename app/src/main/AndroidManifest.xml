@@ -3,11 +3,6 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- Needed on API 33+ for the keep-alive notification to be visible; the foreground
-         service itself keeps the process alive even without it. -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Scoped storage All-Files-Access: lets the Ubuntu runtime browse the phone's shared
          storage (/storage/emulated/0 mounted to /sdcard inside the rootfs). The system still
          requires a one-time user grant under Settings -> All files access; without it the
@@ -34,14 +29,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <service
-            android:name=".KeepAliveService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps the on-device agent runtime, persistent shell and local web servers alive while turns run or while the user enables background keep-alive." />
-        </service>
     </application>
 </manifest>

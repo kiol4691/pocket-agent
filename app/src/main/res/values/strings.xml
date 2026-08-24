@@ -76,13 +76,7 @@
     <string name="turn_failed">This turn failed: %1$s</string>
     <string name="runtime_setup_failed">Runtime setup failed: %1$s</string>
     <string name="session_log_failed">Cannot create session log: %1$s</string>
-    <string name="keepalive_channel">Background keep-alive</string>
+    <string name="keepalive_channel">Keep alive</string>
     <string name="keepalive_title">Pocket Agent running</string>
-    <string name="keepalive_text">Agent turns and local web servers stay alive</string>
-    <string name="keepalive_label">Keep alive in background</string>
-    <string name="keepalive_sub">Foreground service: prevents the system from freezing the app and locally deployed servers</string>
-    <string name="notif_perm_title">Notification permission needed</string>
-    <string name="notif_perm_msg">Background keep-alive relies on a persistent notification. Please allow Pocket Agent to send notifications, then it will be enabled automatically.</string>
-    <string name="notif_perm_open">Open settings</string>
-    <string name="keepalive_on">Keep-alive enabled</string>
+    <string name="keepalive_text">Agent tasks and local servers keep running in the background.</string>
 </resources>
