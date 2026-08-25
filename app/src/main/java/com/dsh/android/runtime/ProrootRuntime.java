@@ -110,8 +110,14 @@ public final class ProrootRuntime {
 
     /** Run a bash command; returns combined stdout+stderr (capped) with the exit code appended. */
     public synchronized String runBash(String command, long timeoutMs) {
+        return runBashEnv(command, timeoutMs, null);
+    }
+
+    /** Run bash with extra environment variables (used by plugin script tools). */
+    public synchronized String runBashEnv(String command, long timeoutMs,
+                                          java.util.Map<String, String> extraEnv) {
         try {
-            return runInternal(command, timeoutMs, "/bin/bash");
+            return runInternal(command, timeoutMs, "/bin/bash", extraEnv);
         } catch (IOException e) {
             return "Error: " + e.getMessage();
         }
@@ -121,7 +127,7 @@ public final class ProrootRuntime {
      * first-time apt bootstrap must go through dash. */
     public synchronized String runSh(String command, long timeoutMs) {
         try {
-            return runInternal(command, timeoutMs, "/bin/sh");
+            return runInternal(command, timeoutMs, "/bin/sh", null);
         } catch (IOException e) {
             return "Error: " + e.getMessage();
         }
@@ -323,6 +329,7 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        env.put("BASH_ENV", "/usr/local/lib/dsh.sh"); // exposes the dsh() broker function
         // adb inside the sandbox is TCP-only and its mDNS/USB init can block; disable both.
         env.put("ADB_MDNS", "0");
         env.put("ADBD_MDNS", "0");
@@ -424,7 +431,8 @@ public final class ProrootRuntime {
         pbDead = true;
     }
 
-    private String runInternal(String command, long timeoutMs, String shell) throws IOException {
+    private String runInternal(String command, long timeoutMs, String shell,
+                               java.util.Map<String, String> extraEnv) throws IOException {
         ensureNetTuning();
         ensureDirectories();
         File launcher = new File(nativeLibDir, "libproroot.so");
@@ -481,9 +489,11 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        env.put("BASH_ENV", "/usr/local/lib/dsh.sh"); // exposes the dsh() broker function
         env.put("ADB_MDNS", "0");
         env.put("ADBD_MDNS", "0");
         env.put("ADB_LIBUSB", "0");
+        if (extraEnv != null) env.putAll(extraEnv);
         addProxyEnv(env);
 
         Process proc;

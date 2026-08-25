@@ -43,13 +43,21 @@ public final class AgentLoop {
     private final String systemPrompt;
     private final JsonlSessionLog log;
     private final AtomicBoolean cancel = new AtomicBoolean(false);
+    private final com.dsh.android.plugin.hooks.PluginHooks hooks;
 
     public AgentLoop(DeepSeekClient client, com.dsh.android.tools.ToolRegistry tools,
                      String systemPrompt, JsonlSessionLog log) {
+        this(client, tools, systemPrompt, log, null);
+    }
+
+    public AgentLoop(DeepSeekClient client, com.dsh.android.tools.ToolRegistry tools,
+                     String systemPrompt, JsonlSessionLog log,
+                     com.dsh.android.plugin.hooks.PluginHooks hooks) {
         this.client = client;
         this.tools = tools;
         this.systemPrompt = systemPrompt;
         this.log = log;
+        this.hooks = hooks;
     }
 
     public void cancel() {
@@ -134,10 +142,36 @@ public final class AgentLoop {
             for (ToolCall call : calls) {
                 if (cancel.get()) break;
                 Log.i(TAG, "tool call: " + call);
-                listener.onToolStart(call);
-                String result = tools.execute(call);
-                listener.onToolResult(call, result);
-                ChatMessage toolMsg = ChatMessage.tool(call.id, result);
+                ToolCall effective = call;
+                if (hooks != null) {
+                    com.dsh.android.plugin.hooks.PluginHooks.HookResult pre =
+                            hooks.beforeToolCall(call.name, call.arguments);
+                    if (pre != null && pre.isVeto()) {
+                        String result = "[vetoed by plugin: " + pre.reason + "]";
+                        listener.onToolStart(call);
+                        listener.onToolResult(call, result);
+                        ChatMessage toolMsg = ChatMessage.tool(call.id, result);
+                        messages.add(toolMsg);
+                        appendLog(toolMsg);
+                        continue;
+                    }
+                    if (pre != null && pre.isRewrite()) {
+                        effective = new ToolCall(call.id, call.name, pre.text);
+                    }
+                }
+                listener.onToolStart(effective);
+                String result = tools.execute(effective);
+                if (hooks != null) {
+                    com.dsh.android.plugin.hooks.PluginHooks.HookResult post =
+                            hooks.afterToolResult(effective.name, effective.arguments, result);
+                    if (post != null && post.isVeto()) {
+                        result = "[result withheld by plugin: " + post.reason + "]";
+                    } else if (post != null && post.isRewrite()) {
+                        result = post.text;
+                    }
+                }
+                listener.onToolResult(effective, result);
+                ChatMessage toolMsg = ChatMessage.tool(effective.id, result);
                 messages.add(toolMsg);
                 appendLog(toolMsg);
             }

@@ -1,0 +1,11 @@
+{
+  "id": "safe_guard",
+  "name": "Safe Guard",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "type": "hook",
+  "description": "Vetoes destructive bash commands (rm -rf /, mkfs, raw dd to devices).",
+  "capabilities": [],
+  "hooks": ["beforeToolCall"],
+  "entry": "main.js"
+}

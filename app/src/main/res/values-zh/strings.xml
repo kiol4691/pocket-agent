@@ -79,4 +79,9 @@
     <string name="keepalive_channel">后台保活</string>
     <string name="keepalive_title">Pocket Agent 运行中</string>
     <string name="keepalive_text">智能体任务与本地服务正在后台保持运行。</string>
+    <string name="plugins">插件</string>
+    <string name="plugin_none">暂无插件。</string>
+    <string name="plugin_hook_confirm_msg">该钩子插件可以检查并修改提示词、工具调用与结果——它能看到你的全部对话内容。确定启用？</string>
+    <string name="plugin_vetoed">已被插件拦截：%1$s</string>
+    <string name="plugin_caps">能力授权（点击切换）</string>
 </resources>

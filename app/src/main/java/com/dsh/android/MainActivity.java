@@ -85,6 +85,7 @@ public final class MainActivity extends AppCompatActivity {
     private SecretStore secrets;
     private RuntimeManager runtime;
     private AgentLoop activeLoop;
+    private com.dsh.android.plugin.PluginManager pluginManager;
 
     private boolean busy;
     private boolean runtimeReady;
@@ -129,6 +130,7 @@ public final class MainActivity extends AppCompatActivity {
         drawerLayout = findViewById(R.id.drawerLayout);
         sessionList = findViewById(R.id.sessionList);
         MarkdownRenderer.init(this);
+        pluginManager = com.dsh.android.plugin.PluginManager.init(this);
 
         findViewById(R.id.btnMenu).setOnClickListener(v ->
                 drawerLayout.openDrawer(GravityCompat.START));
@@ -343,6 +345,20 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         main.post(this::refreshTopTitle);
+
+        // hook seam: beforeSend may veto or rewrite the user's message
+        com.dsh.android.plugin.hooks.PluginHooks.HookResult pre =
+                pluginManager.hooks().beforeSend(task);
+        if (pre != null && pre.isVeto()) {
+            final String reason = pre.reason;
+            main.post(() -> {
+                toast(getString(R.string.plugin_vetoed, reason));
+                setBusy(false);
+            });
+            return;
+        }
+        if (pre != null && pre.isRewrite()) task = pre.text;
+
         String apiKey = secrets.get("api_key");
         android.content.SharedPreferences s = getSharedPreferences("settings", MODE_PRIVATE);
         String model = s.getString("model", "deepseek-chat");
@@ -350,7 +366,9 @@ public final class MainActivity extends AppCompatActivity {
         ToolRegistry tools = new ToolRegistry();
         tools.register(new BashTool(runtime.proroot()));
         tools.register(new StrReplaceEditorTool(runtime.proroot().workspaceDir().toPath()));
-        AgentLoop loop = new AgentLoop(new DeepSeekClient(baseUrl, apiKey, model), tools, buildSystemPrompt(), log);
+        pluginManager.registerTools(tools, runtime.proroot());
+        AgentLoop loop = new AgentLoop(new DeepSeekClient(baseUrl, apiKey, model), tools,
+                buildSystemPrompt(), log, pluginManager.hooks());
         activeLoop = loop;
         final LinearLayout[] assistant = new LinearLayout[1];
         final StringBuilder[] assistantBuf = new StringBuilder[1];
@@ -1183,6 +1201,13 @@ public final class MainActivity extends AppCompatActivity {
         modelArea.addView(change, chp);
         layout.addView(modelArea);
 
+        TextView pluginsEntry = tvGlyph(getString(R.string.plugins), 13, R.color.brand);
+        pluginsEntry.setOnClickListener(v -> showPluginManager());
+        android.widget.LinearLayout.LayoutParams plp = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        plp.topMargin = dp(12);
+        layout.addView(pluginsEntry, plp);
+
         new AlertDialog.Builder(this)
                 .setTitle(R.string.settings)
                 .setView(layout)
@@ -1195,6 +1220,108 @@ public final class MainActivity extends AppCompatActivity {
                     toast(getString(R.string.settings_saved));
                 })
                 .setNeutralButton(R.string.new_session, (d, w) -> confirmNewSession())
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showPluginManager() {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(container);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.plugins)
+                .setView(sv)
+                .setPositiveButton(R.string.ok, null)
+                .show();
+        rebuildPluginList(container, dialog);
+    }
+
+    private void rebuildPluginList(LinearLayout container, AlertDialog dialog) {
+        container.removeAllViews();
+        int pad = dp(20);
+        container.setPadding(pad, dp(8), pad, dp(4));
+        java.util.List<com.dsh.android.plugin.PluginInfo> plugins = pluginManager.plugins();
+        if (plugins.isEmpty()) {
+            container.addView(tvGlyph(getString(R.string.plugin_none), 13, R.color.text_caption));
+            return;
+        }
+        for (com.dsh.android.plugin.PluginInfo p : plugins) {
+            boolean enabled = pluginManager.store().enabled(p);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(0, dp(10), 0, dp(10));
+
+            LinearLayout head = new LinearLayout(this);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            TextView name = tvGlyph(p.name + "  " + p.version, 15, R.color.text_primary);
+            name.setTypeface(null, Typeface.BOLD);
+            head.addView(name, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView badge = tvGlyph(p.type, 11,
+                    p.isHook() ? R.color.accent_red : R.color.accent_green);
+            badge.setBackgroundResource(R.drawable.bg_chip);
+            badge.setPadding(dp(6), dp(2), dp(6), dp(2));
+            head.addView(badge);
+            android.widget.Space spacer = new android.widget.Space(this);
+            head.addView(spacer, new LinearLayout.LayoutParams(dp(8), 1));
+            android.widget.Switch sw = new android.widget.Switch(this);
+            sw.setChecked(enabled);
+            sw.setOnCheckedChangeListener((b, checked) -> {
+                if (checked && p.isHook()) {
+                    sw.setChecked(false);
+                    confirmHookEnable(p, () -> {
+                        pluginManager.setEnabled(p, true);
+                        rebuildPluginList(container, dialog);
+                    });
+                } else {
+                    pluginManager.setEnabled(p, checked);
+                    rebuildPluginList(container, dialog);
+                }
+            });
+            head.addView(sw);
+            row.addView(head);
+
+            if (p.description != null && !p.description.isEmpty()) {
+                row.addView(tvGlyph(p.description, 12, R.color.text_caption));
+            }
+            if (p.error != null) {
+                row.addView(tvGlyph("invalid: " + p.error, 12, R.color.accent_red));
+            }
+            if (enabled && !p.capabilities.isEmpty()) {
+                TextView capsTitle = tvGlyph(getString(R.string.plugin_caps), 12, R.color.text_tertiary);
+                LinearLayout.LayoutParams ctlp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                ctlp.topMargin = dp(8);
+                row.addView(capsTitle, ctlp);
+                for (String cap : p.capabilities) {
+                    boolean granted = pluginManager.store().granted(p.id, cap);
+                    TextView capRow = tvGlyph((granted ? "☑ " : "☐ ") + cap, 14,
+                            granted ? R.color.accent_green : R.color.text_secondary);
+                    capRow.setOnClickListener(v -> {
+                        pluginManager.setGranted(p, cap, !granted);
+                        rebuildPluginList(container, dialog);
+                    });
+                    LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    clp.topMargin = dp(6);
+                    row.addView(capRow, clp);
+                }
+            }
+            container.addView(row);
+            View divider = new View(this);
+            divider.setBackgroundColor(0x1FFFFFFF);
+            container.addView(divider, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        }
+    }
+
+    private void confirmHookEnable(com.dsh.android.plugin.PluginInfo p, Runnable onConfirm) {
+        new AlertDialog.Builder(this)
+                .setTitle(p.name)
+                .setMessage(R.string.plugin_hook_confirm_msg)
+                .setPositiveButton(R.string.ok, (d, w) -> onConfirm.run())
                 .setNegativeButton(R.string.cancel, null)
                 .show();
     }

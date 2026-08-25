@@ -1,0 +1,24 @@
+{
+  "id": "notify_demo",
+  "name": "Notify Demo",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "type": "tool",
+  "description": "Send a local Android notification via the dsh broker.",
+  "capabilities": ["notify", "toast"],
+  "tools": [
+    {
+      "name": "send_notification",
+      "description": "Send a local Android notification. Provide title and body. Requires the 'notify' capability to be granted to this plugin.",
+      "script": "send.sh",
+      "params": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Notification title" },
+          "body": { "type": "string", "description": "Notification body" }
+        },
+        "required": ["title", "body"]
+      }
+    }
+  ]
+}
