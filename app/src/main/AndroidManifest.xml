@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Runtime notification permission (API 33+): required for the keep-alive foreground
+         service notification and the plugin 'notify' capability. Grant via adb
+         (pm grant) or the system permission dialog. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Scoped storage All-Files-Access: lets the Ubuntu runtime browse the phone's shared
          storage (/storage/emulated/0 mounted to /sdcard inside the rootfs). The system still
          requires a one-time user grant under Settings -> All files access; without it the

@@ -60,6 +60,17 @@ public final class PluginInfo {
         } else if ("hook".equals(type) && hooks.isEmpty()) {
             e = "hook plugin declares no hooks";
         }
+        if (e == null) {
+            for (ToolSpec t : tools) {
+                if (!new File(dir, t.script).isFile()) {
+                    e = "script missing: " + t.script + " (broken copy? delete this folder)";
+                    break;
+                }
+            }
+            if (e == null && "hook".equals(type) && !new File(dir, entry).isFile()) {
+                e = "entry missing: " + entry + " (broken copy? delete this folder)";
+            }
+        }
         this.error = e;
     }
 

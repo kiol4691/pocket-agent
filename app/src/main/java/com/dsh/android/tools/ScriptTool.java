@@ -54,8 +54,19 @@ public final class ScriptTool implements Tool {
         PluginManager pm = PluginManager.get();
         if (pm != null) pm.ensureRootfsAssets();
         File script = new File(plugin.dir, spec.script);
-        if (!script.isFile()) return "Error: plugin script missing: " + spec.script;
-        String cmd = "bash '" + script.getAbsolutePath().replace("'", "'\\''") + "'";
+        if (!script.isFile()) {
+            // self-heal: an earlier extraction may have been partial (OEM AssetManager
+            // quirks) — re-run the per-file extractor once and re-check.
+            if (pm != null) {
+                com.dsh.android.plugin.PluginScanner.extractSamples(pm.context());
+                pm.ensureRootfsAssets();
+            }
+        }
+        if (!script.isFile()) return "Error: plugin script missing: " + spec.script
+                + " (extraction failed; reinstall the plugin folder)";
+        // The guest cannot see host paths — the plugins dir is bind-mounted at /pluginshost.
+        String guestScript = "/pluginshost/" + plugin.id + "/" + spec.script;
+        String cmd = "bash '" + guestScript + "'";
         java.util.Map<String, String> env = new java.util.LinkedHashMap<>();
         env.put("DSH_PLUGIN_ID", plugin.id);
         env.put("DSH_TOOL_ARGS", argsJson == null ? "{}" : argsJson);

@@ -43,6 +43,7 @@ public final class PluginManager {
     private final PluginStore store;
     private final List<PluginInfo> plugins = new ArrayList<>();
     private final List<RhinoHookEngine> hookEngines = new ArrayList<>();
+    private final java.util.Map<String, String> hookErrors = new java.util.LinkedHashMap<>();
 
     public static PluginManager init(Context context) {
         appContext = context.getApplicationContext();
@@ -64,16 +65,44 @@ public final class PluginManager {
     public synchronized void reload() {
         plugins.clear();
         hookEngines.clear();
+        hookErrors.clear();
         List<PluginInfo> scanned = PluginScanner.scan(context);
+        // Dedupe by manifest id: if the same id exists in more than one folder (typo'd
+        // manual copies), the complete copy wins — a broken one must never shadow a
+        // healthy tool with the same registered name.
+        java.util.Map<String, PluginInfo> byId = new java.util.LinkedHashMap<>();
         for (PluginInfo p : scanned) {
+            PluginInfo prev = byId.get(p.id);
+            if (prev == null || (!complete(prev) && complete(p))) {
+                byId.put(p.id, p);
+            }
+        }
+        for (PluginInfo p : byId.values()) {
             plugins.add(p);
             if (p.isHook() && store.enabled(p)) {
                 RhinoHookEngine engine = loadHookEngine(p);
-                if (engine != null) hookEngines.add(engine);
+                if (engine != null) {
+                    hookEngines.add(engine);
+                } else {
+                    hookErrors.put(p.id, "hook engine failed to load — plugin is NOT active (see dsh.log)");
+                }
             }
         }
         PluginBroker.ensure(context);
         ensureRootfsAssets();
+    }
+
+    /** Non-null when an enabled hook plugin failed to load its JS engine. */
+    public synchronized String hookError(String pluginId) {
+        return hookErrors.get(pluginId);
+    }
+
+    private static boolean complete(PluginInfo p) {
+        if (p.error != null) return false;
+        for (PluginInfo.ToolSpec t : p.tools) {
+            if (!new File(p.dir, t.script).isFile()) return false;
+        }
+        return !"hook".equals(p.type) || new File(p.dir, p.entry).isFile();
     }
 
     public synchronized List<PluginInfo> plugins() {

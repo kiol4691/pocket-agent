@@ -45,6 +45,7 @@ public final class ProrootRuntime {
     private final File runDir;
     private final File rootfsDir;
     private final File workspaceDir;
+    private final File pluginsDir;
     private final File tmpDir;
     private final File nativeLibDir;
 
@@ -58,6 +59,7 @@ public final class ProrootRuntime {
         this.runDir = new File(filesDir, "run");
         this.rootfsDir = new File(filesDir, "rootfs");
         this.workspaceDir = new File(filesDir, "workspace");
+        this.pluginsDir = new File(filesDir, "plugins");
         this.tmpDir = filesDir;
         this.nativeLibDir = new File(context.getApplicationInfo().nativeLibraryDir);
     }
@@ -88,7 +90,7 @@ public final class ProrootRuntime {
     private static final String GUEST_STORAGE_REL = "sdcard";
 
     public void ensureDirectories() throws IOException {
-        for (File d : new File[]{runDir, rootfsDir, workspaceDir}) {
+        for (File d : new File[]{runDir, rootfsDir, workspaceDir, pluginsDir}) {
             if (!d.isDirectory() && !d.mkdirs()) throw new IOException("Cannot create directory " + d);
         }
     }
@@ -304,6 +306,8 @@ public final class ProrootRuntime {
         args.add("/sys:/sys");
         args.add("-b");
         args.add(workspaceDir.getAbsolutePath() + ":/root/workspace");
+        args.add("-b");
+        args.add(pluginsDir.getAbsolutePath() + ":/pluginshost"); // plugin scripts (Type A)
         if (storageAccessGranted()) {
             File guestSdcard = new File(rootfsDir, GUEST_STORAGE_REL);
             if (guestSdcard.isDirectory() || guestSdcard.mkdirs()) {
@@ -458,6 +462,8 @@ public final class ProrootRuntime {
         args.add("/sys:/sys");
         args.add("-b");
         args.add(workspaceDir.getAbsolutePath() + ":/root/workspace");
+        args.add("-b");
+        args.add(pluginsDir.getAbsolutePath() + ":/pluginshost"); // plugin scripts (Type A)
         if (storageAccessGranted()) {
             File guestSdcard = new File(rootfsDir, GUEST_STORAGE_REL);
             if (guestSdcard.isDirectory() || guestSdcard.mkdirs()) {

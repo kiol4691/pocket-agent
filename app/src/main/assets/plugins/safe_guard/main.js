@@ -10,7 +10,8 @@ function onBeforeToolCall(ctx) {
     return { action: "allow" };
   }
   var patterns = [
-    /(^|[^a-zA-Z0-9])rm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)[a-zA-Z]*\s+\/(\s|$)/,
+    /(^|[\s;|&])rm\s+(--[a-zA-Z-]+\s+)*(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+\/(\s|;|$|\)|&)/,
+    /(^|[\s;|&])rm\s+(--[a-zA-Z-]+\s+)+\/(\s|;|$|\)|&)/,
     /mkfs/,
     /dd\s+[^\n]*of=\/dev\/(sd|hd|nvme|mmcblk)/
   ];

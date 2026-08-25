@@ -1289,6 +1289,12 @@ public final class MainActivity extends AppCompatActivity {
             if (p.error != null) {
                 row.addView(tvGlyph("invalid: " + p.error, 12, R.color.accent_red));
             }
+            if (enabled && p.isHook()) {
+                String herr = pluginManager.hookError(p.id);
+                if (herr != null) {
+                    row.addView(tvGlyph(herr, 12, R.color.accent_red));
+                }
+            }
             if (enabled && !p.capabilities.isEmpty()) {
                 TextView capsTitle = tvGlyph(getString(R.string.plugin_caps), 12, R.color.text_tertiary);
                 LinearLayout.LayoutParams ctlp = new LinearLayout.LayoutParams(
