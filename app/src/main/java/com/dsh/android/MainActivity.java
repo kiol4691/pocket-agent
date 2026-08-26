@@ -294,12 +294,19 @@ public final class MainActivity extends AppCompatActivity {
         if (busy) return;
         String text = input.getText().toString().trim();
         if (text.isEmpty()) return;
+        input.setText("");
+        dispatch(text);
+    }
+
+    /** Shared send path for typed messages and the Continue pill. */
+    private void dispatch(String text) {
+        if (busy) return;
         String apiKey = secrets.get("api_key");
         if (apiKey == null || apiKey.isEmpty()) {
             showSettings();
             return;
         }
-        input.setText("");
+        hideContinuePill();
         addBubbleUser(text);
         setBusy(true);
         executor.execute(() -> {
@@ -318,6 +325,35 @@ public final class MainActivity extends AppCompatActivity {
             }
             startAgent(text);
         });
+    }
+
+    private View continuePill;
+
+    /** One-tap resume after an interrupted or failed turn. */
+    private void addContinuePill() {
+        hideContinuePill();
+        LinearLayout pill = new LinearLayout(this);
+        pill.setOrientation(LinearLayout.HORIZONTAL);
+        pill.setGravity(android.view.Gravity.CENTER);
+        pill.setBackgroundResource(R.drawable.bg_chip);
+        pill.setPadding(dp(16), dp(7), dp(16), dp(7));
+        TextView t = tvGlyph(getString(R.string.continue_turn), 13, R.color.brand);
+        pill.addView(t);
+        pill.setOnClickListener(v -> dispatch(getString(R.string.continue_turn)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(6);
+        lp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        continuePill = pill;
+        transcript.addView(pill, lp);
+        scrollDown();
+    }
+
+    private void hideContinuePill() {
+        if (continuePill != null) {
+            transcript.removeView(continuePill);
+            continuePill = null;
+        }
     }
 
     private void setBusy(boolean b) {
@@ -454,6 +490,7 @@ public final class MainActivity extends AppCompatActivity {
                     colorBubble(box, getColor(R.color.accent_red));
                     endTurn();
                     finalizeAssistantBubble(assistant, assistantBuf);
+                    addContinuePill();
                 });
             }
 
@@ -479,6 +516,9 @@ public final class MainActivity extends AppCompatActivity {
                     }
                     endTurn();
                     finalizeAssistantBubble(assistant, assistantBuf);
+                    if (answer != null && answer.equals("(cancelled)")) {
+                        addContinuePill();
+                    }
                 });
             }
         });

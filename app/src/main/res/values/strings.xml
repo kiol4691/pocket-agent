@@ -84,4 +84,5 @@
     <string name="plugin_hook_confirm_msg">This hook plugin can inspect and modify prompts, tool calls and results — it sees your whole conversation. Enable it?</string>
     <string name="plugin_vetoed">Blocked by plugin: %1$s</string>
     <string name="plugin_caps">Capabilities (tap to toggle grant)</string>
+    <string name="continue_turn">Continue</string>
 </resources>

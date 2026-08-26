@@ -75,9 +75,37 @@ public final class AgentLoop {
         if (history != null && !history.isEmpty()) {
             List<ChatMessage> tail = new ArrayList<>(history.subList(
                     Math.max(0, history.size() - MAX_HISTORY_MESSAGES), history.size()));
-            // Drop a dangling tail from an interrupted session (assistant-with-tool_calls or a
-            // trailing tool reply): the API rejects an unanswered tool_calls message followed by
-            // a fresh user message.
+            // Repair a dangling tail from an interrupted/errored turn instead of dropping
+            // it: keep the partial assistant text and the tool calls that WERE answered,
+            // strip only unanswered tool_calls (the API rejects tool_calls without a
+            // following tool message). The model thus continues where it left off.
+            if (!tail.isEmpty()) {
+                List<ChatMessage> toolMsgs = new ArrayList<>();
+                while (!tail.isEmpty() && "tool".equals(tail.get(tail.size() - 1).role)) {
+                    toolMsgs.add(0, tail.remove(tail.size() - 1));
+                }
+                if (!tail.isEmpty() && tail.get(tail.size() - 1).toolCalls != null) {
+                    ChatMessage a = tail.remove(tail.size() - 1);
+                    java.util.Set<String> answered = new java.util.HashSet<>();
+                    for (ChatMessage t : toolMsgs) {
+                        if (t.toolCallId != null) answered.add(t.toolCallId);
+                    }
+                    List<ToolCall> kept = new ArrayList<>();
+                    if (a.toolCalls != null) {
+                        for (ToolCall c : a.toolCalls) {
+                            if (answered.contains(c.id)) kept.add(c);
+                        }
+                    }
+                    boolean hasText = a.content != null && !a.content.isEmpty();
+                    if (hasText || !kept.isEmpty()) {
+                        tail.add(ChatMessage.assistant(a.content,
+                                kept.isEmpty() ? null : kept, a.reasoning));
+                        tail.addAll(toolMsgs);
+                    }
+                }
+            }
+            // Safety net: anything still dangling above (legacy/corrupt files) is dropped —
+            // the API rejects unanswered tool_calls followed by a fresh user message.
             while (!tail.isEmpty()) {
                 ChatMessage last = tail.get(tail.size() - 1);
                 if ("tool".equals(last.role) || last.toolCalls != null) {

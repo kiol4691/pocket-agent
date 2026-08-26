@@ -84,4 +84,5 @@
     <string name="plugin_hook_confirm_msg">该钩子插件可以检查并修改提示词、工具调用与结果——它能看到你的全部对话内容。确定启用？</string>
     <string name="plugin_vetoed">已被插件拦截：%1$s</string>
     <string name="plugin_caps">能力授权（点击切换）</string>
+    <string name="continue_turn">继续</string>
 </resources>
