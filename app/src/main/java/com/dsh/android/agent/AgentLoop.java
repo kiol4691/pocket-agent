@@ -131,10 +131,12 @@ public final class AgentLoop {
 
             DeepSeekClient.AssistantResult res;
             final StringBuilder reasoningBuf = new StringBuilder();
+            final StringBuilder textBuf = new StringBuilder();
             try {
                 res = client.chat(messages, tools.schemas(),
                         new DeepSeekClient.Listener() {
                             @Override public void onTextDelta(String delta) {
+                                if (delta != null) textBuf.append(delta);
                                 listener.onAssistantDelta(delta);
                             }
 
@@ -145,10 +147,16 @@ public final class AgentLoop {
                         }, cancel);
             } catch (Exception e) {
                 Log.w(TAG, "LLM call failed", e);
+                persistPartial(textBuf, reasoningBuf, messages);
                 listener.onError("LLM error: " + e.getMessage());
                 return;
             }
             if (cancel.get()) {
+                // Persist the partially streamed answer so a later "Continue" turn
+                // (and session replay) still has the interrupted work in context.
+                persistPartial(
+                        textBuf.length() > 0 ? textBuf : new StringBuilder(res.content == null ? "" : res.content),
+                        reasoningBuf, messages);
                 listener.onFinished("(cancelled)");
                 return;
             }
@@ -210,6 +218,19 @@ public final class AgentLoop {
         } else {
             listener.onError("Reached max iterations (" + MAX_ITERATIONS + ") without a final answer.");
         }
+    }
+
+    /** Log a partially streamed assistant message (no tool calls) so interrupted work
+     * survives in the session; skipped when there is nothing at all to keep. */
+    private void persistPartial(StringBuilder text, StringBuilder reasoning, List<ChatMessage> messages) {
+        boolean hasText = text.length() > 0;
+        boolean hasReasoning = reasoning.length() > 0;
+        if (!hasText && !hasReasoning) return;
+        ChatMessage m = ChatMessage.assistant(
+                hasText ? text.toString() : null, null,
+                hasReasoning ? reasoning.toString() : null);
+        messages.add(m);
+        appendLog(m);
     }
 
     private void appendLog(ChatMessage msg) {
