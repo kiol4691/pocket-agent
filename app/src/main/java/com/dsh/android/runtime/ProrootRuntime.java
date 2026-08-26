@@ -173,6 +173,10 @@ public final class ProrootRuntime {
                 pbIn.write("{\n");
                 pbIn.write(command);
                 pbIn.write("\n} </dev/null\n");
+                // Terminate any unterminated output line: a command whose output lacks a
+                // trailing newline (curl | head, printf…) would otherwise glue the marker
+                // onto that line and the reader would never recognize it -> full-timeout.
+                pbIn.write("echo\n");
                 pbIn.write("echo \"");
                 pbIn.write(pbMarker);
                 pbIn.write("\"=$?\n");
@@ -380,10 +384,12 @@ public final class ProrootRuntime {
                 synchronized (pbLock) {
                     if (used > 0) {
                         String s = new String(line, 0, used, java.nio.charset.StandardCharsets.UTF_8);
-                        if (pbWait && !s.startsWith(pbMarker)) appendCappedLine(pbOut, s);
-                        else if (pbWait && s.startsWith(pbMarker)) {
-                            pbRc = s.substring(pbMarker.length());
-                            pbDone = true;
+                        int idx = pbWait ? s.indexOf(pbMarker) : -1;
+                        if (idx >= 0) {
+                            if (idx > 0) appendCappedLine(pbOut, s.substring(0, idx));
+                            pbRc = s.substring(idx + pbMarker.length());
+                        } else if (pbWait) {
+                            appendCappedLine(pbOut, s);
                         }
                     }
                     pbDead = true;
@@ -400,8 +406,12 @@ public final class ProrootRuntime {
         String s = new String(line, 0, used, java.nio.charset.StandardCharsets.UTF_8);
         synchronized (pbLock) {
             if (!pbWait) return;
-            if (s.startsWith(pbMarker)) {
-                pbRc = s.substring(pbMarker.length());
+            // Defensive: accept the marker even when glued to other output (no trailing
+            // newline from the command) — anything before it is still real output.
+            int idx = s.indexOf(pbMarker);
+            if (idx >= 0) {
+                if (idx > 0) appendCappedLine(pbOut, s.substring(0, idx));
+                pbRc = s.substring(idx + pbMarker.length());
                 pbDone = true;
                 pbLock.notifyAll();
             } else {
