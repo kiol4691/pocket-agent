@@ -4,6 +4,8 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
@@ -99,6 +101,15 @@ public final class PluginBroker {
                 case "toast":
                     result = doToast(payload);
                     break;
+                case "intent":
+                    result = doIntent(context, payload);
+                    break;
+                case "clipboard":
+                    result = doClipboard(context, payload);
+                    break;
+                case "device":
+                    result = doDevice(context);
+                    break;
                 default:
                     result = "unknown capability '" + cap + "'";
                     break;
@@ -135,6 +146,82 @@ public final class PluginBroker {
         if (payload.isEmpty()) return "Error: empty message";
         main.post(() -> Toast.makeText(PluginManager.context(), payload, Toast.LENGTH_SHORT).show());
         return "toast shown";
+    }
+
+    /** payload = "kind|data": view|<url>, share|<text>, app|<package>. */
+    private static String doIntent(Context context, String payload) {
+        int cut = payload.indexOf('|');
+        if (cut <= 0) return "Error: expected kind|data (view|share|app)";
+        String kind = payload.substring(0, cut);
+        String data = payload.substring(cut + 1);
+        try {
+            Intent i;
+            switch (kind) {
+                case "view":
+                    if (data.isEmpty()) return "Error: empty url";
+                    i = new Intent(Intent.ACTION_VIEW, Uri.parse(data));
+                    break;
+                case "share":
+                    i = new Intent(Intent.ACTION_SEND);
+                    i.setType("text/plain");
+                    i.putExtra(Intent.EXTRA_TEXT, data);
+                    break;
+                case "app":
+                    if (data.isEmpty()) return "Error: empty package";
+                    i = context.getPackageManager().getLaunchIntentForPackage(data.trim());
+                    if (i == null) return "Error: no launcher activity for " + data.trim();
+                    break;
+                default:
+                    return "Error: unknown intent kind '" + kind + "'";
+            }
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(i);
+            return "intent fired: " + kind;
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    private static String doClipboard(Context context, String payload) {
+        if (payload.isEmpty()) return "Error: empty text";
+        main.post(() -> {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("dsh", payload));
+            }
+        });
+        return "copied to clipboard (" + payload.length() + " chars)";
+    }
+
+    private static String doDevice(Context context) {
+        StringBuilder sb = new StringBuilder("{");
+        try {
+            android.content.Intent bat = context.registerReceiver(null,
+                    new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            if (bat != null) {
+                int level = bat.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+                int scale = bat.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+                int status = bat.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1);
+                int plugged = bat.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0);
+                if (level >= 0 && scale > 0) {
+                    sb.append("\"battery_pct\":").append(level * 100 / scale).append(',');
+                }
+                sb.append("\"charging\":").append(plugged != 0).append(',');
+                sb.append("\"status\":\"").append(
+                        status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ? "charging"
+                                : status == android.os.BatteryManager.BATTERY_STATUS_FULL ? "full"
+                                : "discharging").append('"');
+            }
+            android.os.PowerManager pm = (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                sb.append(",\"screen_on\":").append(pm.isInteractive());
+            }
+        } catch (Exception e) {
+            sb.append("\"error\":\"").append(String.valueOf(e.getMessage())).append('"');
+        }
+        sb.append('}');
+        return sb.toString();
     }
 
     private static void ensureChannel(Context context) {

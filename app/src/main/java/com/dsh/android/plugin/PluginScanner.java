@@ -48,10 +48,10 @@ public final class PluginScanner {
         return out;
     }
 
-    /** Copy assets/plugins/* into files/plugins/*. Per-file, never overwrites existing
-     * files — EXCEPT: when the extracted manifest.json is byte-identical to the bundled
-     * one (i.e. the user never customized the plugin), the whole folder is refreshed so
-     * sample fixes shipped in a new APK actually reach the device. */
+    /** Copy assets/plugins/* into files/plugins/*. A plugin whose manifest was never
+     * edited by the user (hash matches the .dsh-pristine marker written at extraction)
+     * is fully refreshed from assets on every launch — bundled fixes reach the device.
+     * A user-customized plugin is only filled in for missing files, never overwritten. */
     public static void extractSamples(Context context) {
         File root = new File(context.getFilesDir(), "plugins");
         if (!root.isDirectory() && !root.mkdirs()) return;
@@ -61,31 +61,67 @@ public final class PluginScanner {
             for (String id : samples) {
                 File dst = new File(root, id);
                 if (!dst.isDirectory() && !dst.mkdirs()) return;
-                boolean pristine = isPristineCopy(context, "plugins/" + id, dst);
+                boolean pristine = isPristine(context, "plugins/" + id, dst);
                 copyAssetDir(context, "plugins/" + id, dst, pristine);
+                writePristineMarker(context, "plugins/" + id, dst);
             }
         } catch (Exception e) {
             DebugLog.w("plugin sample extraction failed: " + e.getMessage());
         }
     }
 
-    /** True when the extracted manifest matches the bundled one byte-for-byte. */
-    private static boolean isPristineCopy(Context context, String assetDir, File dstDir) {
-        File mf = new File(dstDir, "manifest.json");
-        if (!mf.isFile()) return false;
+    /** sha256 of the extracted manifest, hex-encoded, or null. */
+    private static String manifestHash(File dstDir) {
         try {
-            byte[] assetBytes;
+            File mf = new File(dstDir, "manifest.json");
+            if (!mf.isFile()) return null;
+            byte[] b = java.nio.file.Files.readAllBytes(mf.toPath());
+            return ioHash(b);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String ioHash(byte[] b) throws Exception {
+        byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(b);
+        StringBuilder sb = new StringBuilder();
+        for (byte x : d) sb.append(String.format("%02x", x));
+        return sb.toString();
+    }
+
+    /** Pristine = no manifest yet, or manifest hash equals the recorded extraction hash. */
+    private static boolean isPristine(Context context, String assetDir, File dstDir) {
+        String extracted = manifestHash(dstDir);
+        if (extracted == null) return true; // fresh install
+        File marker = new File(dstDir, ".dsh-pristine");
+        if (!marker.isFile()) {
+            // legacy extraction without a marker: pristine iff manifest matches bundled
             try (InputStream in = context.getAssets().open(assetDir + "/manifest.json")) {
                 ByteArrayOutputStream bo = new ByteArrayOutputStream();
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
-                assetBytes = bo.toByteArray();
+                return extracted.equals(ioHash(bo.toByteArray()));
+            } catch (Exception e) {
+                return false;
             }
-            byte[] fileBytes = java.nio.file.Files.readAllBytes(mf.toPath());
-            return java.util.Arrays.equals(assetBytes, fileBytes);
+        }
+        try {
+            String recorded = new String(java.nio.file.Files.readAllBytes(marker.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8).trim();
+            return recorded.equals(extracted);
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    private static void writePristineMarker(Context context, String assetDir, File dstDir) {
+        try {
+            String h = manifestHash(dstDir);
+            if (h == null) return;
+            java.nio.file.Files.write(new File(dstDir, ".dsh-pristine").toPath(),
+                    h.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
         }
     }
 

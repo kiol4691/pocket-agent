@@ -131,6 +131,9 @@ public final class MainActivity extends AppCompatActivity {
         sessionList = findViewById(R.id.sessionList);
         MarkdownRenderer.init(this);
         pluginManager = com.dsh.android.plugin.PluginManager.init(this);
+        applySlotStyle(findViewById(R.id.topbar), "topbar", R.color.bg_base, 0);
+        applySlotStyle(findViewById(R.id.composer), "composer", R.color.input_major, 22);
+        applySlotStyle(findViewById(R.id.sidebar), "sidebar", R.color.sidebar, 0);
 
         findViewById(R.id.btnMenu).setOnClickListener(v ->
                 drawerLayout.openDrawer(GravityCompat.START));
@@ -671,6 +674,27 @@ public final class MainActivity extends AppCompatActivity {
 
     // ---------- view helpers ----------
 
+    /** Apply whitelisted plugin style overrides to a slot view (no-op when unset). */
+    private void applySlotStyle(View v, String slot, int defColorRes, float defRadiusDp) {
+        if (!com.dsh.android.plugin.styles.PluginStyles.has(slot)) return;
+        Integer bg = com.dsh.android.plugin.styles.PluginStyles.bgColor(slot);
+        Float radius = com.dsh.android.plugin.styles.PluginStyles.num(slot, "radius");
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
+        gd.setColor(bg != null ? bg : getColor(defColorRes));
+        float r = radius != null ? dp(Math.round(radius)) : dp(Math.round(defRadiusDp));
+        gd.setCornerRadius(r);
+        v.setBackground(gd);
+        Integer tc = com.dsh.android.plugin.styles.PluginStyles.textColor(slot);
+        if (tc != null && v instanceof TextView) ((TextView) v).setTextColor(tc);
+        Float ts = com.dsh.android.plugin.styles.PluginStyles.num(slot, "textSize");
+        if (ts != null && v instanceof TextView) ((TextView) v).setTextSize(ts);
+        Float pad = com.dsh.android.plugin.styles.PluginStyles.num(slot, "padding");
+        if (pad != null) {
+            int p = dp(Math.round(pad));
+            v.setPadding(p, v.getPaddingTop(), p, v.getPaddingBottom());
+        }
+    }
+
     private TextView addBubbleUser(String text) {
         hideHome();
         TextView tv = new TextView(this);
@@ -681,6 +705,7 @@ public final class MainActivity extends AppCompatActivity {
         tv.setLineSpacing(4, 1.0f);
         tv.setPadding(dp(16), dp(10), dp(16), dp(10));
         tv.setMaxWidth(maxBubbleWidth());
+        applySlotStyle(tv, "bubbleUser", R.color.bubble_user_bg, 22);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.gravity = Gravity.END;
@@ -692,13 +717,14 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private BubbleBuilder.Style bubbleStyle() {
+        Integer codeOverride = com.dsh.android.plugin.styles.PluginStyles.bgColor("codeBlock");
         return new BubbleBuilder.Style(
                 getColor(R.color.text_primary),
                 getColor(R.color.text_secondary),
                 getColor(R.color.text_caption),
                 getColor(R.color.brand),
                 getColor(R.color.inline_code_bg),
-                getColor(R.color.code_bg),
+                codeOverride != null ? codeOverride : getColor(R.color.code_bg),
                 getColor(R.color.border_light));
     }
 
@@ -713,6 +739,7 @@ public final class MainActivity extends AppCompatActivity {
         hideHome();
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
+        applySlotStyle(box, "bubbleAssistant", R.color.bg_base, 12);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(16);
@@ -957,6 +984,7 @@ public final class MainActivity extends AppCompatActivity {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setBackgroundResource(R.drawable.bg_tool);
+        applySlotStyle(body, "toolCard", R.color.tool_bg, 10);
         body.setPadding(dp(14), dp(10), dp(14), dp(10));
         body.setVisibility(View.GONE);
 

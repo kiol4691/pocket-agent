@@ -72,9 +72,10 @@ public final class AgentLoop {
         cancel.set(false);
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(systemPrompt));
+        int maxHistory = hooks != null ? hooks.historyLimit() : MAX_HISTORY_MESSAGES;
         if (history != null && !history.isEmpty()) {
             List<ChatMessage> tail = new ArrayList<>(history.subList(
-                    Math.max(0, history.size() - MAX_HISTORY_MESSAGES), history.size()));
+                    Math.max(0, history.size() - maxHistory), history.size()));
             // Repair a dangling tail from an interrupted/errored turn instead of dropping
             // it: keep the partial assistant text and the tool calls that WERE answered,
             // strip only unanswered tool_calls (the API rejects tool_calls without a

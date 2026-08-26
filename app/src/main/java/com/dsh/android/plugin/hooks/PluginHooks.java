@@ -14,6 +14,9 @@ public interface PluginHooks {
     /** ctx = tool name + arguments JSON + result text. Rewrite → result text replaced. */
     HookResult afterToolResult(String toolName, String argsJson, String result);
 
+    /** How many history messages to keep (default 40). Chain takes the smallest value. */
+    int historyLimit();
+
     /** Verdict of one hook: allow (null-ish), veto (with reason) or rewrite (with new text). */
     final class HookResult {
         public final String action;   // "allow" | "veto" | "rewrite"

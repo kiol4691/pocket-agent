@@ -50,11 +50,25 @@ public final class HookChain implements PluginHooks {
             ctx.put("name", toolName);
             ctx.put("args", argsJson);
             ctx.put("result", result);
-            HookResult r = e.call("onAfterToolResult", ctx);
+            PluginHooks.HookResult r = e.call("onAfterToolResult", ctx);
             if (r == null) continue;
             if (r.isVeto()) return r;
             if (r.isRewrite()) result = r.text;
         }
         return null;
+    }
+
+    /** Smallest limit across engines that define onHistoryLimit; default 40. */
+    @Override
+    public int historyLimit() {
+        int limit = 40;
+        for (RhinoHookEngine e : engines) {
+            Integer v = e.historyLimit(limit);
+            if (v != null) {
+                v = Math.max(2, Math.min(500, v));
+                limit = Math.min(limit, v);
+            }
+        }
+        return limit;
     }
 }

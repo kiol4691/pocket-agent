@@ -13,6 +13,7 @@
 
     <!-- top bar: brand + session + model + controls -->
     <LinearLayout
+        android:id="@+id/topbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
@@ -224,6 +225,7 @@
         android:paddingBottom="10dp">
 
         <LinearLayout
+            android:id="@+id/composer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"

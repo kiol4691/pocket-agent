@@ -66,6 +66,8 @@ public final class PluginManager {
         plugins.clear();
         hookEngines.clear();
         hookErrors.clear();
+        java.util.Map<String, java.util.Map<String, String>> currentStyles =
+                new java.util.LinkedHashMap<>();
         List<PluginInfo> scanned = PluginScanner.scan(context);
         // Dedupe by manifest id: if the same id exists in more than one folder (typo'd
         // manual copies), the complete copy wins — a broken one must never shadow a
@@ -83,11 +85,20 @@ public final class PluginManager {
                 RhinoHookEngine engine = loadHookEngine(p);
                 if (engine != null) {
                     hookEngines.add(engine);
+                    // merge style overrides in registration order; later slots win
+                    if (!engine.styles().isEmpty()) {
+                        java.util.Map<String, java.util.Map<String, String>> merged =
+                                new java.util.LinkedHashMap<>();
+                        merged.putAll(currentStyles);
+                        merged.putAll(engine.styles());
+                        currentStyles = merged;
+                    }
                 } else {
                     hookErrors.put(p.id, "hook engine failed to load — plugin is NOT active (see dsh.log)");
                 }
             }
         }
+        com.dsh.android.plugin.styles.PluginStyles.replaceAll(currentStyles);
         PluginBroker.ensure(context);
         ensureRootfsAssets();
     }

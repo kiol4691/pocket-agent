@@ -1,0 +1,47 @@
+{
+  "id": "device_kit",
+  "name": "Device Kit",
+  "version": "0.2.0",
+  "apiVersion": 1,
+  "type": "tool",
+  "description": "Device info, clipboard and app/URL launching via broker capabilities.",
+  "capabilities": ["device", "clipboard", "intent"],
+  "tools": [
+    {
+      "name": "device_info",
+      "description": "Read device status: battery percentage, charging state, screen on/off. No grant needed beyond the 'device' capability.",
+      "script": "device.sh",
+      "params": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "open_url",
+      "description": "Open a URL on the phone (Android VIEW intent), e.g. https://example.com",
+      "script": "open_url.sh",
+      "params": {
+        "type": "object",
+        "properties": { "url": { "type": "string", "description": "The URL to open" } },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "open_app",
+      "description": "Launch an installed app by package name, e.g. com.sankuai.meituan",
+      "script": "open_app.sh",
+      "params": {
+        "type": "object",
+        "properties": { "package": { "type": "string", "description": "Android package name" } },
+        "required": ["package"]
+      }
+    },
+    {
+      "name": "copy_text",
+      "description": "Put text on the phone's clipboard.",
+      "script": "copy_text.sh",
+      "params": {
+        "type": "object",
+        "properties": { "text": { "type": "string", "description": "Text to copy" } },
+        "required": ["text"]
+      }
+    }
+  ]
+}

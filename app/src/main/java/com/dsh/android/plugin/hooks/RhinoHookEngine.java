@@ -33,10 +33,16 @@ public final class RhinoHookEngine {
     private final String pluginId;
     private final Scriptable scope;
     private final Object lock = new Object();
+    private final Map<String, Map<String, String>> styles = new LinkedHashMap<>();
 
     private RhinoHookEngine(String pluginId, Scriptable scope) {
         this.pluginId = pluginId;
         this.scope = scope;
+    }
+
+    /** Style overrides returned by onStyle() at load time (may be empty). */
+    public Map<String, Map<String, String>> styles() {
+        return styles;
     }
 
     /** Compile main.js into a fresh jailed scope. Returns null on failure. */
@@ -48,13 +54,70 @@ public final class RhinoHookEngine {
                 Scriptable scope = cx.initStandardObjects();
                 defineDsh(cx, scope, pluginId);
                 cx.evaluateString(scope, source, pluginId + "/main.js", 1, null);
-                return new RhinoHookEngine(pluginId, scope);
+                RhinoHookEngine engine = new RhinoHookEngine(pluginId, scope);
+                engine.loadStyles(cx);
+                return engine;
             } finally {
                 Context.exit();
             }
         } catch (Throwable t) {
             DebugLog.w("hook plugin " + pluginId + " failed to load: " + t.getMessage());
             return null;
+        }
+    }
+
+    /** Optional onStyle() -> { slot: { prop: value } }; validated downstream. */
+    @SuppressWarnings("unchecked")
+    private void loadStyles(Context cx) {
+        try {
+            Object f = scope.get("onStyle", scope);
+            if (!(f instanceof Function)) return;
+            Object res = ((Function) f).call(cx, scope, scope, new Object[0]);
+            if (!(res instanceof Scriptable)) return;
+            Scriptable root = (Scriptable) res;
+            for (Object id : root.getIds()) {
+                if (!(id instanceof String)) continue;
+                Object slotVal = root.get((String) id, root);
+                if (!(slotVal instanceof Scriptable)) continue;
+                Map<String, String> props = new LinkedHashMap<>();
+                for (Object pid : ((Scriptable) slotVal).getIds()) {
+                    if (!(pid instanceof String)) continue;
+                    Object pv = ((Scriptable) slotVal).get((String) pid, (Scriptable) slotVal);
+                    if (pv != null && !(pv instanceof Scriptable)) {
+                        props.put((String) pid, String.valueOf(pv));
+                    }
+                }
+                styles.put((String) id, props);
+            }
+        } catch (Throwable t) {
+            DebugLog.w("hook " + pluginId + ".onStyle failed: " + t.getMessage());
+        }
+    }
+
+    /** Optional onHistoryLimit(ctx) -> number of history messages to keep (2..500). */
+    public Integer historyLimit(int defaultLimit) {
+        synchronized (lock) {
+            Context cx = factory().enterContext();
+            try {
+                configure(cx);
+                Object f = scope.get("onHistoryLimit", scope);
+                if (!(f instanceof Function)) return null;
+                Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("default", defaultLimit);
+                Object[] args = { toScriptable(cx, ctx) };
+                Object res = ((Function) f).call(cx, scope, scope, args);
+                if (res instanceof Number) return ((Number) res).intValue();
+                if (res instanceof Scriptable) {
+                    Object v = ScriptableObject.getProperty((Scriptable) res, "limit");
+                    if (v instanceof Number) return ((Number) v).intValue();
+                }
+                return null;
+            } catch (Throwable t) {
+                DebugLog.w("hook " + pluginId + ".onHistoryLimit failed: " + t.getMessage());
+                return null;
+            } finally {
+                Context.exit();
+            }
         }
     }
 
