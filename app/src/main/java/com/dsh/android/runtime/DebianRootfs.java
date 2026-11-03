@@ -86,10 +86,13 @@ public final class DebianRootfs {
             int rc = p.waitFor();
             if (rc != 0) {
                 DebugLog.w("toybox tar rc=" + rc + ": " + sb);
-                return false;
             }
-            // toybox 对个别条目报错仍可能返回 0（例如硬链接），用关键文件兜底判断
-            return new File(destDir, "bin/bash").isFile();
+            // rc 不等于 0 也可能是**部分条目**失败：app 进程建硬链接会被 SELinux 拒绝
+            // （实测 "can't link usr/bin/unzip -> usr/bin/zipinfo: Permission denied"），
+            // 而其余 30 万个文件都解好了。所以以关键文件为准，rc 只作日志。
+            boolean ok = new File(destDir, "bin/bash").isFile();
+            if (!ok && rc == 0) DebugLog.w("toybox tar rc=0 but no bin/bash");
+            return ok;
         } catch (Exception e) {
             DebugLog.w("toybox tar unavailable: " + e);
             return false;
@@ -173,7 +176,15 @@ public final class DebianRootfs {
         try {
             if (!extractWithToybox(payload, rootfsDir)) {
                 DebugLog.w("bootstrap: toybox tar failed, falling back to Java extractor");
-                IOUtil.extractTarGz(payload, rootfsDir);
+                // payload 是 xz 解出来的裸 .tar，不能再用 gzip 解码器（会 ZipException）
+                if (payload.getName().endsWith(".tar")) {
+                    try (InputStream in = new BufferedInputStream(
+                            new FileInputStream(payload), 1 << 16)) {
+                        IOUtil.extractTar(in, rootfsDir);
+                    }
+                } else {
+                    IOUtil.extractTarGz(payload, rootfsDir);
+                }
             }
         } finally {
             //noinspection ResultOfMethodCallIgnored
