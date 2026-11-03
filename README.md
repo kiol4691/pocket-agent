@@ -4,8 +4,11 @@
 <p align="center">🇬🇧 English · <a href="README_zh.md">🇨🇳 中文</a></p>
 
 A Java-native, tool-calling AI agent that runs entirely on your phone. Its `bash` tool executes a full
-**Ubuntu arm64** userspace inside the app via **proroot** — a rootless, LD_PRELOAD-based `proot` replacement
-with zero ptrace overhead. No root, no Node, no embedded webview.
+**Debian arm64** userspace inside the app via **pocketroot** — an open-source (MIT), rootless,
+LD_PRELOAD-based path-translation shim with zero ptrace overhead. No root, no Node, no embedded webview.
+
+> Runtime backends: **pocketroot** (default, bundled — Debian 13 + `libzng.so`) and **proroot**
+> (legacy; needs the closed-source `libproroot*.so` plus an Ubuntu rootfs).
 
 **Independent re-implementation.** Inspired by the minimal mode of
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (MIT), but written from scratch in Java —
@@ -45,18 +48,18 @@ no shared code. Works with any OpenAI-compatible endpoint (DeepSeek, OpenRouter,
 1. Install the APK on an **arm64 Android 8.0+** device
 2. Open **Settings** → paste your API key (DeepSeek or any OpenAI-compatible endpoint,
    change `base_url` for OpenRouter / vLLM / one-api) → pick a model
-3. Tap **Setup**: extracts the bundled Ubuntu rootfs (no download, no root),
-   writes `/etc/resolv.conf`, installs `bash coreutils git ca-certificates curl`
+3. Tap **Setup**: extracts the bundled Debian 13 rootfs (about 350 MB, no download, no root).
+   It already ships `python3`, `git`, `curl`, `jq`, `numpy`, `requests`, `openpyxl`, `python-docx`,
+   so there is no package-install step
 4. Type a task and hit **Send**. The agent runs a multi-step loop: plan → bash → observe → iterate,
    each tool call rendered as a card in the transcript
 
 ## Building from source
 
 1. JDK 17 + Android SDK (compileSdk 35, minSdk 26)
-2. **Add the proroot binaries**: the repo intentionally does *not* ship `libproroot*.so`
-   (see `app/src/main/jniLibs/arm64-v8a/README.txt`). Download the 5 `.so` files from
-   [coderredlab/proroot releases](https://github.com/coderredlab/proroot/releases) and place them in
-   `app/src/main/jniLibs/arm64-v8a/` (the build does not compile without them)
+2. Nothing to fetch: the shim (`libzng.so`) and the Debian rootfs
+   (`assets/debian-rootfs-arm64.bin`) are both in the repo. The legacy proroot binaries are
+   optional — without them only the proroot backend is unavailable
 3. `./gradlew :app:assembleDebug`
 4. Build & install on an arm64 device / emulator
 
@@ -67,38 +70,39 @@ MainActivity (native UI, transcript + tool cards)
    └── AgentLoop              tool-calling loop: model → tools → results → model …
         ├── ChatClient        OpenAI-compatible chat-completions, SSE streaming, tool calls (OkHttp)
         ├── ToolRegistry
-        │    ├── bash         runs inside Ubuntu / proroot (ProrootRuntime)
+        │    ├── bash         runs inside Debian / pocketroot (PocketrootRuntime)
         │    ├── filesystem   plain Java NIO on the app workspace
         │    └── todo         in-memory todo list
         ├── JsonlSessionLog   append-only JSONL session history
-        └── RuntimeManager    proroot binaries + Ubuntu rootfs lifecycle
+        └── RuntimeManager    shim + Debian rootfs lifecycle (PocketrootRuntime / DebianRootfs)
 ```
 
 App-private storage layout:
 
 ```
-files/run/        copied libproroot*.so (executed here)
-files/rootfs/     extracted Ubuntu arm64 base rootfs
+files/rootfs/     extracted Debian 13 arm64 rootfs (bundled in the APK)
+files/zng.log     shim log: path translation + fail-visible diagnostics
 files/workspace/  agent workspace (mapped to /root/workspace inside Linux)
 files/sessions/   *.jsonl transcripts
 ```
 
-The bash tool launches `libproroot.so -r rootfs -0 --link2symlink -b /proc -b /dev -b /sys
--b <workspace>:/root/workspace -w /root/workspace /bin/bash -c '<command>'` via `exec setsid`,
-so a timed-out call kills the whole process group — no orphaned children. Output is merged
-stdout+stderr with a 256 KB cap, exit code appended for the model.
+The bash tool launches `<rootfs>/lib/ld-linux-aarch64.so.1 /bin/bash -c '<command>'` with
+`LD_PRELOAD=<apk>/lib/arm64/libzng.so` and `ZNG_ROOT` / `ZNG_BINDS` describing the rootfs view,
+via `exec setsid` — a timed-out call kills the whole process group, so no orphaned children.
+Output is merged stdout+stderr with a 256 KB cap, exit code appended for the model.
 
 ## Limitations
 
-- **arm64 only** (proroot constraint); x86_64 emulators will not work
+- **arm64 only** (the shim is built for aarch64); x86_64 emulators will not work
 - Single agent loop, three tools (upstream harness's subagent / LSP / workflow / web UI are not ported)
-- proroot is **proprietary** — free to use, redistribution of *modified* binaries not permitted;
-  unmodified upstream binaries are bundled as-is. See `THIRD_PARTY_NOTICES.md`
+- The bundled Debian rootfs is a **modified** image (seccomp patches + a modification notice);
+  it is not an official Debian build. Distribution names and trademarks remain with their owners
+- The legacy proroot backend is still in the tree, but nothing depends on it by default
 - Building a model requires your own API key; no bundled inference
 
 ## License
 
 [MIT](LICENSE) — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled third-party works
-(Markwon, JLaTeXMath, OkHttp, AndroidX, proroot, Ubuntu base).
+(Markwon, JLaTeXMath, OkHttp, AndroidX, pocketroot shim (MIT), Debian rootfs).
 
 *Not affiliated with or endorsed by DeepSeek. "DeepSeek Harness" is a product of DeepSeek (MIT).*

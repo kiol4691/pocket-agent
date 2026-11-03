@@ -22,7 +22,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Commands are launched via {@code exec setsid ...} so we can kill the whole process group
  * on timeout, avoiding orphaned children.
  */
-public final class ProrootRuntime {
+public class ProrootRuntime {
+
+    /* 启动器是这一层唯一的可变量：proroot 用一个可执行的 launcher，pocketroot 用
+     * 「ld.so + LD_PRELOAD=libzng.so」。三个钩子（launcherFile / launchCommand /
+     * applyLauncherEnv）把差异收干，会话、超时、进程组回收等逻辑两边共用。 */
 
     public static final long MAX_OUTPUT_BYTES = 256 * 1024L;
 
@@ -42,11 +46,16 @@ public final class ProrootRuntime {
     private String pbRc;
     private volatile boolean pbDead = true;
 
-    private final File runDir;
-    private final File rootfsDir;
-    private final File workspaceDir;
-    private final File tmpDir;
-    private final File nativeLibDir;
+    protected final File runDir;
+    protected final File rootfsDir;
+    protected final File workspaceDir;
+    protected final File tmpDir;
+    protected final File nativeLibDir;
+
+    private static final String RESOLV_CONF =
+            "nameserver 223.5.5.5\nnameserver 119.29.29.29\nnameserver 114.114.114.114\n"
+                    + "options timeout:2 attempts:2 rotate\n";
+    private volatile boolean netTuned;
 
     public ProrootRuntime(Context context) {
         File filesDir = context.getFilesDir();
@@ -91,16 +100,71 @@ public final class ProrootRuntime {
     /** Verify the proroot launcher and its companions exist in the APK native library dir. */
     public synchronized void verifyBinaries() throws IOException {
         ensureDirectories();
-        File launcher = new File(nativeLibDir, "libproroot.so");
+        File launcher = launcherFile();
         if (!launcher.isFile()) {
-            throw new IOException("proroot libraries not found in " + nativeLibDir
+            throw new IOException(launcherName() + " libraries not found in " + nativeLibDir
                     + ". Drop the 5 libproroot*.so files from the proroot release "
                     + "into app/src/main/jniLibs/arm64-v8a/ and rebuild, then retry setup.");
         }
     }
 
     public boolean binariesInstalled() {
-        return new File(nativeLibDir, "libproroot.so").isFile();
+        return launcherFile().isFile();
+    }
+
+    /** 启动器文件：proroot 是可执行的 launcher 本体，pocketroot 是 shim 的 .so。 */
+    protected File launcherFile() {
+        return new File(nativeLibDir, "libproroot.so");
+    }
+
+    /** 出错提示里显示的名字。 */
+    protected String launcherName() {
+        return "proroot";
+    }
+
+    /** 构造完整 argv（含启动器自身、bind、工作目录与 shell）。 */
+    protected List<String> launchCommand(String shell) {
+        List<String> args = new ArrayList<>();
+        args.add(launcherFile().getAbsolutePath());
+        args.add("-r");
+        args.add(rootfsDir.getAbsolutePath());
+        args.add("-0");
+        args.add("--link2symlink");
+        args.add("-b");
+        args.add("/proc:/proc");
+        args.add("-b");
+        args.add("/dev:/dev");
+        args.add("-b");
+        args.add("/sys:/sys");
+        args.add("-b");
+        args.add(workspaceDir.getAbsolutePath() + ":/root/workspace");
+        if (storageAccessGranted()) {
+            File guestSdcard = new File(rootfsDir, GUEST_STORAGE_REL);
+            if (guestSdcard.isDirectory() || guestSdcard.mkdirs()) {
+                args.add("-b");
+                args.add(HOST_STORAGE + ":" + GUEST_STORAGE);
+            }
+        }
+        args.add("-w");
+        args.add("/root/workspace");
+        args.add(shell);
+        return args;
+    }
+
+    /** 启动器需要的环境变量。 */
+    protected void applyLauncherEnv(java.util.Map<String, String> env) {
+        env.put("PROROOT_TMP_DIR", tmpDir.getAbsolutePath());
+    }
+
+    /**
+     * 进程初始工作目录（null = 沿用调用方 cwd）。
+     *
+     * proroot 用 {@code -w /root/workspace} 指定 guest cwd；pocketroot 的 shim 对相对
+     * 路径是原样透传、由内核按真实 cwd 解析，所以必须把进程 cwd 设到 rootfs 里对应的
+     * 目录，否则相对路径会落到 Android 的 / 上。
+     */
+    protected File launchCwd() {
+        return null;
     }
 
     /** Run a bash command; returns combined stdout+stderr (capped) with the exit code appended. */
@@ -130,6 +194,12 @@ public final class ProrootRuntime {
         } catch (IOException e) {
             return "Error: " + e.getMessage();
         }
+    }
+
+    /** Abort an in-flight command: kill the persistent bash process group so the blocked
+     * caller returns immediately. The session restarts lazily on the next call. */
+    public void abortWork() {
+        killPersistentBash();
     }
 
     private String runPersistentInternal(String command, long timeoutMs) throws IOException {
@@ -184,51 +254,100 @@ public final class ProrootRuntime {
                 + (text.isEmpty() ? "(no output)" : text);
     }
 
+    /** Start the loopback proxy and (once per process) tune the rootfs network files: CN-only
+     * DNS with fast retries, apt/pip/git proxy wiring, proxy env exports for the shell. */
+    private void ensureNetTuning() {
+        LocalProxy.ensure();
+        int p = LocalProxy.port();
+        if (netTuned || p <= 0) return;
+        java.nio.file.Path rcPath = new File(rootfsDir, "etc/resolv.conf").toPath();
+        try {
+            if (java.nio.file.Files.isSymbolicLink(rcPath)) {
+                java.nio.file.Files.delete(rcPath);
+            }
+        } catch (IOException ignored) {
+        }
+        writeIfChanged(new File(rootfsDir, "etc/resolv.conf"), RESOLV_CONF);
+        writeIfChanged(new File(rootfsDir, "etc/apt/apt.conf.d/99-dsh-proxy"),
+                "Acquire::http::Proxy \"http://127.0.0.1:" + p + "\";\n"
+                        + "Acquire::https::Proxy \"http://127.0.0.1:" + p + "\";\n");
+        writeIfChanged(new File(rootfsDir, "etc/pip.conf"),
+                "[global]\nproxy = http://127.0.0.1:" + p + "\n");
+        writeIfChanged(new File(rootfsDir, "etc/profile.d/dsh-proxy.sh"),
+                "export http_proxy=\"http://127.0.0.1:" + p + "\"\n"
+                        + "export https_proxy=\"http://127.0.0.1:" + p + "\"\n"
+                        + "export HTTP_PROXY=\"$http_proxy\"\n"
+                        + "export HTTPS_PROXY=\"$https_proxy\"\n"
+                        + "export no_proxy=\"localhost,127.0.0.1,::1\"\n"
+                        + "export NO_PROXY=\"$no_proxy\"\n");
+        File gitcfg = new File(rootfsDir, "root/.gitconfig");
+        try {
+            byte[] old = gitcfg.isFile()
+                    ? java.nio.file.Files.readAllBytes(gitcfg.toPath()) : new byte[0];
+            String cur = new String(old, java.nio.charset.StandardCharsets.UTF_8);
+            if (!cur.contains("dsh-local-proxy")) {
+                String body = cur
+                        + (cur.endsWith("\n") || cur.isEmpty() ? "" : "\n")
+                        + "# dsh-local-proxy\n"
+                        + "[http]\n\tproxy = http://127.0.0.1:" + p + "\n"
+                        + "[https]\n\tproxy = http://127.0.0.1:" + p + "\n";
+                gitcfg.getParentFile().mkdirs();
+                java.nio.file.Files.write(gitcfg.toPath(),
+                        body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (IOException ignored) {
+        }
+        netTuned = true;
+    }
+
+    private static void writeIfChanged(File f, String content) {
+        try {
+            f.getParentFile().mkdirs();
+            byte[] cur = f.isFile() ? java.nio.file.Files.readAllBytes(f.toPath()) : null;
+            if (cur == null || !content.equals(new String(cur, java.nio.charset.StandardCharsets.UTF_8))) {
+                java.nio.file.Files.write(f.toPath(), content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void addProxyEnv(java.util.Map<String, String> env) {
+        int p = LocalProxy.port();
+        if (p <= 0) return;
+        String px = "http://127.0.0.1:" + p;
+        env.put("http_proxy", px);
+        env.put("https_proxy", px);
+        env.put("HTTP_PROXY", px);
+        env.put("HTTPS_PROXY", px);
+        env.put("no_proxy", "localhost,127.0.0.1,::1");
+        env.put("NO_PROXY", "localhost,127.0.0.1,::1");
+    }
+
     /** Spawn the single persistent bash (setsid'd so the whole group can be killed on timeout). */
     private void ensurePersistentBash() throws IOException {
         if (!pbDead && pbProc != null && pbProc.isAlive()) return;
+        ensureNetTuning();
         ensureDirectories();
-        File launcher = new File(nativeLibDir, "libproroot.so");
-        if (!launcher.isFile()) throw new IOException("proroot not installed; run runtime setup first.");
-        if (!rootfsDir.isDirectory()) throw new IOException("Ubuntu rootfs not installed; run runtime setup first.");
+        File launcher = launcherFile();
+        if (!launcher.isFile()) throw new IOException(launcherName() + " not installed; run runtime setup first.");
+        if (!rootfsDir.isDirectory()) throw new IOException("rootfs not installed; run runtime setup first.");
 
         File guestWorkspace = new File(rootfsDir, "root/workspace");
         if (!guestWorkspace.isDirectory() && !guestWorkspace.mkdirs()) {
             throw new IOException("Cannot create " + guestWorkspace);
         }
 
-        List<String> args = new ArrayList<>();
-        args.add(launcher.getAbsolutePath());
-        args.add("-r");
-        args.add(rootfsDir.getAbsolutePath());
-        args.add("-0");
-        args.add("--link2symlink");
-        args.add("-b");
-        args.add("/proc:/proc");
-        args.add("-b");
-        args.add("/dev:/dev");
-        args.add("-b");
-        args.add("/sys:/sys");
-        args.add("-b");
-        args.add(workspaceDir.getAbsolutePath() + ":/root/workspace");
-        if (storageAccessGranted()) {
-            File guestSdcard = new File(rootfsDir, GUEST_STORAGE_REL);
-            if (guestSdcard.isDirectory() || guestSdcard.mkdirs()) {
-                args.add("-b");
-                args.add(HOST_STORAGE + ":" + GUEST_STORAGE);
-            }
-        }
-        args.add("-w");
-        args.add("/root/workspace");
-        args.add("/bin/bash");
+        List<String> args = launchCommand("/bin/bash");
         String quoted = q(args);
 
         File pidFile = new File(runDir, "persistent.pid");
         ProcessBuilder pb = new ProcessBuilder("/system/bin/sh", "-c",
                 "printf '%s\\n' \"$$\" > " + shq(pidFile.getAbsolutePath()) + "; exec setsid " + quoted);
         pb.redirectErrorStream(true);
+        File cwd = launchCwd();
+        if (cwd != null) pb.directory(cwd);
         java.util.Map<String, String> env = pb.environment();
-        env.put("PROROOT_TMP_DIR", tmpDir.getAbsolutePath());
+        applyLauncherEnv(env);
         env.put("HOME", "/root");
         env.put("LANG", "C.UTF-8");
         env.put("TERM", "dumb");
@@ -236,6 +355,7 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        addProxyEnv(env);
 
         Process proc;
         try {
@@ -333,40 +453,18 @@ public final class ProrootRuntime {
     }
 
     private String runInternal(String command, long timeoutMs, String shell) throws IOException {
+        ensureNetTuning();
         ensureDirectories();
-        File launcher = new File(nativeLibDir, "libproroot.so");
-        if (!launcher.isFile()) throw new IOException("proroot not installed; run runtime setup first.");
-        if (!rootfsDir.isDirectory()) throw new IOException("Ubuntu rootfs not installed; run runtime setup first.");
+        File launcher = launcherFile();
+        if (!launcher.isFile()) throw new IOException(launcherName() + " not installed; run runtime setup first.");
+        if (!rootfsDir.isDirectory()) throw new IOException("rootfs not installed; run runtime setup first.");
 
         File guestWorkspace = new File(rootfsDir, "root/workspace");
         if (!guestWorkspace.isDirectory() && !guestWorkspace.mkdirs()) {
             throw new IOException("Cannot create " + guestWorkspace);
         }
 
-        List<String> args = new ArrayList<>();
-        args.add(launcher.getAbsolutePath());
-        args.add("-r");
-        args.add(rootfsDir.getAbsolutePath());
-        args.add("-0");
-        args.add("--link2symlink");
-        args.add("-b");
-        args.add("/proc:/proc");
-        args.add("-b");
-        args.add("/dev:/dev");
-        args.add("-b");
-        args.add("/sys:/sys");
-        args.add("-b");
-        args.add(workspaceDir.getAbsolutePath() + ":/root/workspace");
-        if (storageAccessGranted()) {
-            File guestSdcard = new File(rootfsDir, GUEST_STORAGE_REL);
-            if (guestSdcard.isDirectory() || guestSdcard.mkdirs()) {
-                args.add("-b");
-                args.add(HOST_STORAGE + ":" + GUEST_STORAGE);
-            }
-        }
-        args.add("-w");
-        args.add("/root/workspace");
-        args.add(shell);
+        List<String> args = launchCommand(shell);
         args.add("-c");
         args.add(command);
         String quoted = q(args);
@@ -379,8 +477,10 @@ public final class ProrootRuntime {
         ProcessBuilder pb = new ProcessBuilder("/system/bin/sh", "-c",
                 "printf '%s\\n' \"$$\" > " + shq(pidFile.getAbsolutePath()) + "; exec setsid " + quoted);
         pb.redirectErrorStream(true);
+        File cwd = launchCwd();
+        if (cwd != null) pb.directory(cwd);
         java.util.Map<String, String> env = pb.environment();
-        env.put("PROROOT_TMP_DIR", tmpDir.getAbsolutePath());
+        applyLauncherEnv(env);
         env.put("HOME", "/root");
         env.put("LANG", "C.UTF-8");
         env.put("TERM", "dumb");
@@ -388,6 +488,7 @@ public final class ProrootRuntime {
         env.put("PAGER", "cat");
         env.put("GIT_PAGER", "cat");
         env.put("DEBIAN_FRONTEND", "noninteractive");
+        addProxyEnv(env);
 
         Process proc;
         try {

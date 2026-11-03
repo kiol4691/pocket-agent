@@ -5,3 +5,5 @@ local.properties
 *.iml
 .DS_Store
 app/src/main/jniLibs/arm64-v8a/libproroot*.so
+# 98 MB 的 rootfs 产物：用 tools/make-debian-rootfs.sh 本地生成（GitHub 单文件上限 100 MB）
+app/src/main/assets/debian-rootfs-arm64.bin

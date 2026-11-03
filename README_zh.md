@@ -4,8 +4,11 @@
 <p align="center"><a href="README.md">🇬🇧 English</a> · 🇨🇳 中文</p>
 
 纯 Java 原生、完全跑在手机上的工具调用型 AI 智能体（minimal mode）。其 `bash` 工具通过
-**proroot**（基于 LD_PRELOAD、零 ptrace 开销的免 root proot 替代品）在应用内运行完整的
-**Ubuntu arm64** 用户态。无需 root、无 Node.js、无内嵌 WebView。
+**pocketroot**（MIT 开源、基于 LD_PRELOAD 的路径翻译 shim，零 ptrace 开销）在应用内运行完整的
+**Debian arm64** 用户态。无需 root、无 Node.js、无内嵌 WebView。
+
+> 运行时后端：**pocketroot**（默认，随 APK 分发 —— Debian 13 + `libzng.so`）与 **proroot**
+> （旧方案，需要闭源的 `libproroot*.so` 和 Ubuntu rootfs）。
 
 **独立重写，非官方产物。** 灵感来自 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 （MIT 协议）的 minimal mode，但代码为从头编写的 Java 实现，与上游无共享代码。兼容任意
@@ -32,8 +35,8 @@ OpenAI 兼容端点（DeepSeek / OpenRouter / vLLM / one-api 等）。
   侧边栏按日期分组
 - **OpenAI 兼容**：改 base URL + key 即可用 DeepSeek / OpenRouter / vLLM / one-api 等
   （密钥经 Android Keystore 加密存储）
-- **内置 rootfs**：Ubuntu 24.04 arm64 基础根文件系统已打进 APK
-  （首次 Setup 无需下载；清华 / 中科大 / cdimage 镜像作后备）
+- **内置 rootfs**：Debian 13 arm64 轻量根文件系统（约 350 MB）已打进 APK，自带
+  python3 / git / curl / jq / numpy / requests / openpyxl / python-docx，首次 Setup 无需联网
 - **手势友好**：边缘滑动开抽屉，无按钮可点错
 
 ## 截图与演示
@@ -45,18 +48,16 @@ OpenAI 兼容端点（DeepSeek / OpenRouter / vLLM / one-api 等）。
 1. 在 **arm64 Android 8.0+** 设备安装 APK
 2. 打开 **设置** → 粘贴 API key（DeepSeek 或任意 OpenAI 兼容端点，
    如 OpenRouter / vLLM / one-api 请改 `base_url`）→ 选择模型
-3. 点 **Setup**：解压内置 Ubuntu rootfs（免下载、免 root），
-   写入 `/etc/resolv.conf`，并安装 `bash coreutils git ca-certificates curl`
+3. 点 **Setup**：解压内置 Debian 13 rootfs（约 350 MB，免下载、免 root）。
+   工具链已预装，没有 apt 安装阶段
 4. 输入任务，点**发送**。智能体进入多轮循环：规划 → bash → 观察 → 迭代，
    每次工具调用以卡片形式渲染在对话流中
 
 ## 从源码构建
 
 1. JDK 17 + Android SDK（compileSdk 35，minSdk 26）
-2. **放入 proroot 二进制**：仓库有意不内置 `libproroot*.so`
-   （见 `app/src/main/jniLibs/arm64-v8a/README.txt`）。从
-   [coderredlab/proroot releases](https://github.com/coderredlab/proroot/releases) 下载 5 个 `.so`
-   放入 `app/src/main/jniLibs/arm64-v8a/`（缺了无法编译）
+2. 无需额外下载：shim（`libzng.so`）与 Debian rootfs（`assets/debian-rootfs-arm64.bin`）
+   都在仓库里。旧的 proroot 二进制是可选的 —— 没有它只是 proroot 后端不可用
 3. `./gradlew :app:assembleDebug`
 4. 安装到 arm64 真机/模拟器
 
@@ -67,38 +68,38 @@ MainActivity（原生 UI：对话流 + 工具卡片）
    └── AgentLoop              工具调用循环：模型 → 工具 → 结果 → 模型 …
         ├── ChatClient        OpenAI 兼容 chat-completions，SSE 流式，工具调用（OkHttp）
         ├── ToolRegistry
-        │    ├── bash         运行于 Ubuntu / proroot（ProrootRuntime）
+        │    ├── bash         运行于 Debian / pocketroot（PocketrootRuntime）
         │    ├── filesystem   应用工作区上的纯 Java NIO
         │    └── todo         内存待办清单
         ├── JsonlSessionLog   append-only JSONL 会话历史
-        └── RuntimeManager    proroot 二进制 + Ubuntu rootfs 生命周期
+        └── RuntimeManager    shim + Debian rootfs 生命周期（PocketrootRuntime / DebianRootfs）
 ```
 
 应用私有存储布局：
 
 ```
-files/run/        拷贝的 libproroot*.so（在此执行）
-files/rootfs/     解压出的 Ubuntu arm64 基础 rootfs
+files/rootfs/     解压出的 Debian 13 arm64 rootfs（随 APK 分发）
+files/zng.log     shim 日志：路径翻译与 fail-visible 诊断
 files/workspace/  智能体工作区（Linux 内映射为 /root/workspace）
 files/sessions/   *.jsonl 对话转录
 ```
 
-bash 工具通过 `exec setsid` 启动
-`libproroot.so -r rootfs -0 --link2symlink -b /proc -b /dev -b /sys
--b <workspace>:/root/workspace -w /root/workspace /bin/bash -c '<command>'`，
+bash 工具通过 `exec setsid` 启动 `<rootfs>/lib/ld-linux-aarch64.so.1 /bin/bash -c '<command>'`，
+并以 `LD_PRELOAD=<apk>/lib/arm64/libzng.so` + `ZNG_ROOT` / `ZNG_BINDS` 描述 rootfs 视图；
 超时即杀整组进程，不留孤儿；stdout+stderr 合并输出并截断 256 KB，退出码附给模型。
 
 ## 已知限制
 
-- **仅 arm64**（proroot 约束）；x86_64 模拟器不可用
+- **仅 arm64**（shim 按 aarch64 编译）；x86_64 模拟器不可用
 - 单循环 + 三工具（上游的 subagent / LSP / workflow / Web UI 未移植）
-- proroot 为**专有协议**：可免费使用，禁止再分发*修改过*的二进制；
-  仓库按原样捆绑上游未经修改的二进制。详见 `THIRD_PARTY_NOTICES.md`
+- 内置的 Debian rootfs 是**修改版**（打了 seccomp 补丁并加了修改版告知），不是 Debian 官方镜像；
+  发行版名称与商标归各自权利人所有
+- 旧的 proroot 后端仍留在仓库里，但默认没有任何路径依赖它
 - 需要自带 API key 驱动模型，无内置推理
 
 ## 许可证
 
 [MIT](LICENSE)——随附第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-（Markwon、JLaTeXMath、OkHttp、AndroidX、proroot、Ubuntu base）。
+（Markwon、JLaTeXMath、OkHttp、AndroidX、pocketroot shim（MIT）、Debian rootfs）。
 
 *与 DeepSeek 无隶属或背书关系。「DeepSeek Harness」为 DeepSeek 的产品（MIT 协议）。*

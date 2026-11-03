@@ -32,7 +32,6 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,12 +70,14 @@ public final class MainActivity extends AppCompatActivity {
     private ImageView sendIcon;
     private TextView runtimeStatus;
     private TextView modelChip;
+    private TextView topTitle;
     private View home;
     private DrawerLayout drawerLayout;
     private float downX;
     private float downY;
     private LinearLayout sessionList;
     private File activeSession;
+    private File currentSessionFile;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -123,6 +124,7 @@ public final class MainActivity extends AppCompatActivity {
         sendIcon = findViewById(R.id.sendIcon);
         runtimeStatus = findViewById(R.id.runtimeStatus);
         modelChip = findViewById(R.id.modelChip);
+        topTitle = findViewById(R.id.topTitle);
         home = findViewById(R.id.home);
         drawerLayout = findViewById(R.id.drawerLayout);
         sessionList = findViewById(R.id.sessionList);
@@ -141,6 +143,7 @@ public final class MainActivity extends AppCompatActivity {
         send.setOnClickListener(v -> {
             if (busy) {
                 if (activeLoop != null) activeLoop.cancel();
+                new Thread(() -> runtime.runtime().abortWork(), "abort-work").start();
             } else {
                 onSend();
             }
@@ -171,8 +174,15 @@ public final class MainActivity extends AppCompatActivity {
         });
         refreshRuntimeStatus();
         loadLatestSession();
+        refreshTopTitle();
         if (!runtimeReady) autoSetup();
         main.postDelayed(this::promptStorageAccess, 2500);
+
+        // 无 UI 的验证通道（见 runDebugCommand）：等 autoSetup 把 rootfs 备好再执行。
+        final String dbgCmd = getIntent().getStringExtra("pocketroot_cmd");
+        if (dbgCmd != null && !dbgCmd.isEmpty()) {
+            main.postDelayed(() -> runDebugCommand(dbgCmd), 20_000);
+        }
     }
 
     @Override
@@ -229,12 +239,9 @@ public final class MainActivity extends AppCompatActivity {
     private void promptStorageAccess() {
         if (busy || Environment.isExternalStorageManager()) return;
         new AlertDialog.Builder(this)
-                .setTitle("Access phone storage?")
-                .setMessage("Grant \"All files access\" so Ubuntu can read the phone's shared "
-                        + "storage (files appear at /sdcard inside Linux, e.g. df -h /sdcard). "
-                        + "You'll be taken to Settings for a one-time switch. Without it, "
-                        + "storage space is still visible via df -h / inside Ubuntu.")
-                .setPositiveButton("Open Settings", (d, w) -> {
+                .setTitle(R.string.storage_title)
+                .setMessage(getString(R.string.storage_msg))
+                .setPositiveButton(R.string.storage_open, (d, w) -> {
                     try {
                         startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                                 Uri.parse("package:" + getPackageName())));
@@ -242,7 +249,7 @@ public final class MainActivity extends AppCompatActivity {
                         startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
                     }
                 })
-                .setNegativeButton("Later", null)
+                .setNegativeButton(R.string.storage_later, null)
                 .show();
     }
 
@@ -262,7 +269,7 @@ public final class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 final String m = IOUtil.truncate(e.getMessage(), 200);
                 DebugLog.e("autoSetup failed", e);
-                main.post(() -> runtimeStatus.setText("setup failed: " + m));
+                main.post(() -> runtimeStatus.setText(getString(R.string.setup_failed) + m));
             }
         });
     }
@@ -271,7 +278,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void refreshRuntimeStatus() {
         runtimeReady = runtime.state() == RuntimeManager.State.READY;
-        runtimeStatus.setText(runtimeReady ? "● ready" : "● offline");
+        runtimeStatus.setText(getString(runtimeReady ? R.string.runtime_ready : R.string.runtime_offline));
         runtimeStatus.setTextColor(getColor(runtimeReady ? R.color.accent_green : R.color.accent_red));
         android.content.SharedPreferences s = getSharedPreferences("settings", MODE_PRIVATE);
         String model = s.getString("model", "deepseek-chat");
@@ -308,7 +315,7 @@ public final class MainActivity extends AppCompatActivity {
                     final String m = IOUtil.truncate(e.getMessage(), 300);
                     main.post(() -> {
                         setBusy(false);
-                        addBubbleAssistant("Runtime setup failed: " + m);
+                        addBubbleAssistant(getString(R.string.runtime_setup_failed, m));
                     });
                     return;
                 }
@@ -328,25 +335,27 @@ public final class MainActivity extends AppCompatActivity {
         final List<ChatMessage> history;
         try {
             File sessionsDir = new File(getFilesDir(), "sessions");
-            File active = activeSession;
-            if (active != null && active.isFile()) {
-                history = JsonlSessionLog.load(active);
-                log = new JsonlSessionLog(active, true);
+            if (activeSession != null && activeSession.isFile()) {
+                history = JsonlSessionLog.load(activeSession);
+                log = new JsonlSessionLog(activeSession, true);
             } else {
-                history = latestSessionHistory(sessionsDir);
                 log = new JsonlSessionLog(sessionsDir);
+                history = new ArrayList<>();
+                activeSession = log.file();
+                currentSessionFile = log.file();
             }
         } catch (Exception e) {
-            failAgent("Cannot create session log: " + e.getMessage());
+            failAgent(getString(R.string.session_log_failed, e.getMessage()));
             return;
         }
+        main.post(this::refreshTopTitle);
         String apiKey = secrets.get("api_key");
         android.content.SharedPreferences s = getSharedPreferences("settings", MODE_PRIVATE);
         String model = s.getString("model", "deepseek-chat");
         String baseUrl = s.getString("base_url", "https://api.deepseek.com");
         ToolRegistry tools = new ToolRegistry();
-        tools.register(new BashTool(runtime.proroot()));
-        tools.register(new StrReplaceEditorTool(runtime.proroot().workspaceDir().toPath()));
+        tools.register(new BashTool(runtime.runtime()));
+        tools.register(new StrReplaceEditorTool(runtime.runtime().workspaceDir().toPath()));
         AgentLoop loop = new AgentLoop(new DeepSeekClient(baseUrl, apiKey, model), tools, buildSystemPrompt(), log);
         activeLoop = loop;
         final LinearLayout[] assistant = new LinearLayout[1];
@@ -371,6 +380,8 @@ public final class MainActivity extends AppCompatActivity {
                     final LinearLayout ab = assistant[0];
                     queueRender(() -> {
                         BubbleBuilder.sync(ab, md, MainActivity.this, bubbleStyle());
+                        bindBubbleLongPress(ab, () -> assistantBuf[0] == null
+                                ? "" : assistantBuf[0].toString());
                         scrollDown();
                     });
                 });
@@ -396,10 +407,13 @@ public final class MainActivity extends AppCompatActivity {
             public void onToolStart(ToolCall call) {
                 main.post(() -> {
                     dismissStatusRow();
+                    finishThinking();
+                    resetThinkFields();
                     assistant[0] = null;
                     assistantBuf[0] = null;
                     lastToolRow = newToolRow(call);
                     transcript.addView(lastToolRow);
+                    if (lastToolPill != null) startPillAnimation(lastToolPill);
                     scrollDown();
                 });
             }
@@ -407,6 +421,7 @@ public final class MainActivity extends AppCompatActivity {
             @Override
             public void onToolResult(ToolCall call, String output) {
                 main.post(() -> {
+                    stopPillAnimation();
                     if (lastToolRow != null) {
                         String out = output == null ? "(no output)" : output;
                         lastToolOut.setText(IOUtil.truncate(out, 10000));
@@ -421,7 +436,9 @@ public final class MainActivity extends AppCompatActivity {
             public void onError(String message) {
                 main.post(() -> {
                     dismissStatusRow();
-                    LinearLayout box = addBubbleAssistant("This turn failed: " + message);
+                    stopPillAnimation();
+                    settlePendingTool(getString(R.string.pill_failed), R.color.accent_red);
+                    LinearLayout box = addBubbleAssistant(getString(R.string.turn_failed, message));
                     colorBubble(box, getColor(R.color.accent_red));
                     endTurn();
                     finalizeAssistantBubble(assistant, assistantBuf);
@@ -432,7 +449,9 @@ public final class MainActivity extends AppCompatActivity {
             public void onFinished(String answer) {
                 main.post(() -> {
                     dismissStatusRow();
+                    stopPillAnimation();
                     if (answer != null && answer.equals("(cancelled)")) {
+                        settlePendingTool(getString(R.string.stopped), R.color.text_caption);
                         if (assistant[0] != null) {
                             appendMeta(assistantMeta, " · " + getString(R.string.stopped));
                         } else {
@@ -475,6 +494,8 @@ public final class MainActivity extends AppCompatActivity {
     private void finalizeAssistantBubble(final LinearLayout[] assistant, final StringBuilder[] assistantBuf) {
         if (assistant[0] != null && assistantBuf[0] != null && assistantBuf[0].length() > 0) {
             BubbleBuilder.sync(assistant[0], assistantBuf[0].toString(), this, bubbleStyle());
+            bindBubbleLongPress(assistant[0], () -> assistantBuf[0] == null
+                    ? "" : assistantBuf[0].toString());
         }
     }
 
@@ -489,6 +510,15 @@ public final class MainActivity extends AppCompatActivity {
         setBusy(false);
         activeLoop = null;
         assistantMeta = null;
+        stopPillAnimation();
+        resetThinkFields();
+        lastToolRow = null;
+        lastToolOut = null;
+        lastToolPill = null;
+        scrollDown();
+    }
+
+    private void resetThinkFields() {
         thinkRow = null;
         thinkBody = null;
         thinkSummary = null;
@@ -497,10 +527,56 @@ public final class MainActivity extends AppCompatActivity {
         thinkDone = null;
         thinkText = null;
         thinkFinished = false;
-        lastToolRow = null;
-        lastToolOut = null;
-        lastToolPill = null;
-        scrollDown();
+    }
+
+    private void refreshTopTitle() {
+        if (topTitle == null) return;
+        String t = getString(R.string.app_name);
+        if (currentSessionFile != null && currentSessionFile.isFile()) {
+            String s = sessionTitle(currentSessionFile);
+            if (s != null && !s.isEmpty()) t = s;
+        }
+        topTitle.setText(t);
+    }
+
+    private final Runnable pillTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!pillAnimRunning || animPill == null) return;
+            pillDots = (pillDots + 1) % 4;
+            StringBuilder sb = new StringBuilder(getString(R.string.pill_running_base));
+            for (int i = 0; i < pillDots; i++) sb.append('.');
+            animPill.setText(sb.toString());
+            main.postDelayed(this, 450);
+        }
+    };
+    private TextView animPill;
+    private int pillDots;
+    private boolean pillAnimRunning;
+
+    private void startPillAnimation(TextView pill) {
+        animPill = pill;
+        pillDots = 0;
+        if (pillAnimRunning) return;
+        pillAnimRunning = true;
+        main.postDelayed(pillTick, 450);
+    }
+
+    private void stopPillAnimation() {
+        pillAnimRunning = false;
+        animPill = null;
+        main.removeCallbacks(pillTick);
+    }
+
+    /** Resolve a still-running tool pill at turn end when no onToolResult arrived
+     * (cancel between iterations, or an LLM error mid-turn). */
+    private void settlePendingTool(String label, int colorRes) {
+        if (lastToolPill == null) return;
+        String s = String.valueOf(lastToolPill.getText());
+        if (s.startsWith(getString(R.string.pill_running_base))) {
+            lastToolPill.setText(label);
+            lastToolPill.setTextColor(getColor(colorRes));
+        }
     }
 
     private void showStatusRow() {
@@ -534,22 +610,10 @@ public final class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** Load the whole conversation history: each send still writes a new session file, so memory
-     * must merge ALL session files (oldest -> newest), not just the latest one — otherwise the
-     * model only ever sees the previous single exchange. AgentLoop trims to the last 40 messages. */
-    private List<ChatMessage> latestSessionHistory(File sessionsDir) throws IOException {
-        File[] files = sessionsDir.listFiles(f -> f.isFile() && f.getName().endsWith(".jsonl"));
-        if (files == null || files.length == 0) return new ArrayList<>();
-        Arrays.sort(files, java.util.Comparator.comparing(File::getName));
-        List<ChatMessage> all = new ArrayList<>();
-        for (File f : files) all.addAll(JsonlSessionLog.load(f));
-        return all;
-    }
-
     private void failAgent(String message) {
         main.post(() -> {
             setBusy(false);
-            addBubbleAssistant("This turn failed: " + message);
+            addBubbleAssistant(getString(R.string.turn_failed, message));
         });
     }
 
@@ -602,9 +666,97 @@ public final class MainActivity extends AppCompatActivity {
         lp.topMargin = dp(16);
         transcript.addView(box, lp);
         BubbleBuilder.sync(box, text, this, bubbleStyle());
+        bindBubbleLongPress(box, () -> text);
         assistantMeta = addMetaRow(Gravity.START, formatTime(System.currentTimeMillis()));
         scrollDown();
         return box;
+    }
+
+    /** The prose TextViews inside an assistant bubble use a movement method and swallow touch
+     * events, so a long-press must be bound on every descendant, not just the container. */
+    private void bindBubbleLongPress(final View v, final java.util.function.Supplier<String> src) {
+        v.setOnLongClickListener(x -> {
+            openContentEditor(getString(R.string.role_ai), src.get());
+            return true;
+        });
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                bindBubbleLongPress(g.getChildAt(i), src);
+            }
+        }
+    }
+
+    /** Long-press on a bubble: open the message in an editable container with a
+     * copy-all shortcut; native text selection works inside for partial copies. */
+    private void openContentEditor(final String role, final String initial) {
+        int pad = dp(16);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(pad, pad, pad, pad);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView copyAll = tvGlyph("⧉ " + getString(R.string.copy_all), 13, R.color.brand);
+        copyAll.setBackgroundResource(R.drawable.bg_chip);
+        copyAll.setPadding(dp(10), dp(5), dp(10), dp(5));
+        TextView title = tvGlyph(role, 11, R.color.text_caption);
+        title.setMaxLines(1);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tlp.leftMargin = dp(12);
+        tlp.rightMargin = dp(8);
+        TextView close = tvGlyph("✕", 15, R.color.text_secondary);
+        close.setPadding(dp(8), dp(4), dp(2), dp(4));
+        header.addView(copyAll);
+        header.addView(title, tlp);
+        header.addView(close);
+        root.addView(header);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(getColor(R.color.border_light));
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        dlp.topMargin = dp(12);
+        root.addView(divider, dlp);
+
+        final EditText et = new EditText(this);
+        et.setText(initial);
+        et.setTextSize(14);
+        et.setTypeface(Typeface.MONOSPACE);
+        et.setTextColor(getColor(R.color.text_primary));
+        android.graphics.drawable.GradientDrawable ep = new android.graphics.drawable.GradientDrawable();
+        ep.setColor(getColor(R.color.code_bg));
+        ep.setCornerRadius(dp(12));
+        ep.setStroke(Math.max(1, dp(1)), getColor(R.color.border_light));
+        et.setBackground(ep);
+        et.setGravity(Gravity.TOP);
+        et.setMinimumHeight(dp(340));
+        et.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        et.setPadding(dp(14), dp(12), dp(14), dp(12));
+        root.addView(et, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        copyAll.setOnClickListener(v -> {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(android.content.ClipData.newPlainText(
+                    getString(R.string.copy_all), et.getText().toString()));
+            toast(getString(R.string.copied_all));
+        });
+
+        AlertDialog dlg = new AlertDialog.Builder(this).setView(root).create();
+        if (dlg.getWindow() != null) {
+            android.graphics.drawable.GradientDrawable wbg = new android.graphics.drawable.GradientDrawable();
+            wbg.setColor(getColor(R.color.layer1));
+            wbg.setCornerRadius(dp(22));
+            dlg.getWindow().setBackgroundDrawable(wbg);
+        }
+        dlg.show();
     }
 
     private void addMetaOnly(String text) {
@@ -907,30 +1059,60 @@ public final class MainActivity extends AppCompatActivity {
         return m + "m " + rs + "s";
     }
 
-    /** Hidden diagnostic: long-press the runtime status to run a compile-and-run check inside proroot. */
+    /**
+     * 调试入口：{@code am start ... --es pocketroot_cmd '<shell>'}
+     *
+     * 在 rootfs 里执行一条命令，结果写 files/cmd.log 并进 logcat。没有模型 API key 时，
+     * 这是验证运行时（shim / rootfs / 工具链）唯一的自动化通道。
+     */
+    private void runDebugCommand(final String cmd) {
+        executor.execute(() -> {
+            String out;
+            try {
+                out = runtime.runtime().runBash(cmd, 300_000L);
+            } catch (Exception e) {
+                out = "Error: " + e;
+            }
+            try {
+                IOUtil.writeText(new File(getFilesDir(), "cmd.log"), out);
+            } catch (Exception ignored) {
+            }
+            DebugLog.i("DEBUG CMD OUTPUT:\n" + out);
+        });
+    }
+
+    /** Hidden diagnostic: long-press the runtime status to check the rootfs + toolchain. */
     private void runSelfTest() {
-        Toast.makeText(this, "Self test running…", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, getString(R.string.selftest_running), Toast.LENGTH_SHORT).show();
         executor.execute(() -> {
             String res;
             try {
-                res = runtime.proroot().runBash(
-                        "echo === ; id ; uname -m ; "
-                                + "echo ===DF=== ; df -h / ; "
-                                + "echo ===SDCARD=== ; df -h /sdcard 2>&1 ; ls -d /sdcard 2>&1 ; "
-                                + "(timeout 420 bash -c 'rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; apt-get update -y' > /root/workspace/apt.log 2>&1; echo URC=$? >> /root/workspace/apt.log; "
-                                + " timeout 420 apt-get install -y --no-install-recommends bash coreutils git ca-certificates curl >> /root/workspace/apt.log 2>&1; "
-                                + " echo IRC=$? >> /root/workspace/apt.log) ; "
-                                + "echo ===APTLOG=== ; tail -25 /root/workspace/apt.log ; "
-                                + "echo ===WHICH=== ; which bash git curl python3",
-                        900_000L);
+                // Debian 轻量 rootfs 自带工具链，不需要 apt；这里查的是「运行时是否真的可用」。
+                res = runtime.runtime().runBash(
+                        "set +e; echo ===ID===; id; uname -m; "
+                                + "echo ===OS===; grep -E 'PRETTY_NAME|VARIANT_ID' /etc/os-release; "
+                                + "echo ===DISK===; df -h / | tail -1; "
+                                + "echo ===PY===; python3 -V; "
+                                + "python3 -c 'import numpy, requests, openpyxl, docx; "
+                                + "print(\"imports ok\", numpy.__version__, requests.__version__)'; "
+                                + "python3 -c 'import ctypes; ctypes.CDLL(\"libgomp.so.1\"); print(\"libgomp ok\")'; "
+                                + "echo ===TOOLS===; git --version; curl --version | head -1; jq --version; "
+                                + "echo ===WORKSPACE===; pwd; touch ws.txt && ls ws.txt && rm ws.txt; "
+                                + "echo DONE",
+                        300_000L);
             } catch (Exception e) {
                 res = "Error: " + e;
             }
             final String out = res;
+            try {
+                IOUtil.writeText(new File(getFilesDir(), "selftest.log"), out);
+            } catch (Exception ignored) {
+            }
+            DebugLog.i("SELFTEST OUTPUT:\n" + out);
             main.post(() -> new AlertDialog.Builder(this)
-                    .setTitle("proroot self test")
+                    .setTitle(R.string.selftest_title)
                     .setMessage(out)
-                    .setPositiveButton("OK", null)
+                    .setPositiveButton(R.string.ok, null)
                     .show());
         });
     }
@@ -979,7 +1161,7 @@ public final class MainActivity extends AppCompatActivity {
     private void saveModel(String m) {
         getSharedPreferences("settings", MODE_PRIVATE).edit().putString("model", m).apply();
         if (modelChip != null) modelChip.setText(shortModel(m) + " ▾");
-        toast("Model: " + shortModel(m));
+        toast(getString(R.string.model_selected, shortModel(m)));
     }
 
     // ---------- settings ----------
@@ -1046,7 +1228,7 @@ public final class MainActivity extends AppCompatActivity {
                     getSharedPreferences("settings", MODE_PRIVATE).edit()
                             .putString("base_url", base.getText().toString().trim())
                             .apply();
-                    toast("Settings saved.");
+                    toast(getString(R.string.settings_saved));
                 })
                 .setNeutralButton(R.string.new_session, (d, w) -> confirmNewSession())
                 .setNegativeButton(R.string.cancel, null)
@@ -1068,12 +1250,18 @@ public final class MainActivity extends AppCompatActivity {
         activeLoop = null;
         setBusy(false);
         activeSession = null;
+        currentSessionFile = null;
+        stopPillAnimation();
+        resetThinkFields();
+        lastToolRow = null;
+        lastToolOut = null;
+        lastToolPill = null;
+        assistantMeta = null;
         transcript.removeAllViews();
-        File sessionsDir = new File(getFilesDir(), "sessions");
-        File[] files = sessionsDir.listFiles(f -> f.isFile() && f.getName().endsWith(".jsonl"));
-        if (files != null) for (File f : files) f.delete();
         if (home != null) home.setVisibility(View.VISIBLE);
         input.setHint(getString(R.string.input_hint_hero));
+        refreshTopTitle();
+        rebuildSessionList();
         toast(getString(R.string.reset_done));
     }
 
@@ -1083,10 +1271,12 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         activeSession = null;
+        currentSessionFile = null;
         drawerLayout.closeDrawers();
         transcript.removeAllViews();
         if (home != null) home.setVisibility(View.VISIBLE);
         input.setHint(getString(R.string.input_hint_hero));
+        refreshTopTitle();
         rebuildSessionList();
     }
 
@@ -1096,6 +1286,7 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         activeSession = file;
+        currentSessionFile = file;
         drawerLayout.closeDrawers();
         transcript.removeAllViews();
         try {
@@ -1104,6 +1295,7 @@ public final class MainActivity extends AppCompatActivity {
             if (home != null) home.setVisibility(View.VISIBLE);
             input.setHint(getString(R.string.input_hint_hero));
         }
+        refreshTopTitle();
         rebuildSessionList();
         scrollDown();
     }
@@ -1201,16 +1393,83 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+        java.util.Set<String> pins = pinnedSessions();
+        List<File> pinned = new ArrayList<>();
+        List<File> rest = new ArrayList<>();
+        for (File f : files) (pins.contains(f.getName()) ? pinned : rest).add(f);
+        if (!pinned.isEmpty()) {
+            sessionList.addView(sessionGroupHeader(getString(R.string.drawer_pinned)));
+            for (File f : pinned) sessionList.addView(sessionItem(f, sessionTitle(f),
+                    f.equals(currentSessionFile), true));
+        }
         String curGroup = null;
-        for (File f : files) {
+        for (File f : rest) {
             String group = sessionGroup(f.getName());
             if (!group.equals(curGroup)) {
                 curGroup = group;
                 sessionList.addView(sessionGroupHeader(group));
             }
-            boolean active = f.equals(activeSession);
-            sessionList.addView(sessionItem(f, sessionTitle(f), active));
+            sessionList.addView(sessionItem(f, sessionTitle(f), f.equals(currentSessionFile), false));
         }
+    }
+
+    private java.util.Set<String> pinnedSessions() {
+        return new java.util.HashSet<>(getSharedPreferences("sessions", MODE_PRIVATE)
+                .getStringSet("pinned", new java.util.HashSet<>()));
+    }
+
+    private void setPinned(File f, boolean pin) {
+        android.content.SharedPreferences sp = getSharedPreferences("sessions", MODE_PRIVATE);
+        java.util.Set<String> cur = new java.util.HashSet<>(sp.getStringSet("pinned", new java.util.HashSet<>()));
+        if (pin) cur.add(f.getName());
+        else cur.remove(f.getName());
+        sp.edit().putStringSet("pinned", cur).apply();
+    }
+
+    /** Long-press quick menu on a sidebar entry: pin/unpin and delete. */
+    private void showSessionMenu(View anchor, final File f, final boolean pinned) {
+        androidx.appcompat.widget.PopupMenu pm = new androidx.appcompat.widget.PopupMenu(this, anchor);
+        pm.getMenu().add(0, 1, 0, getString(pinned ? R.string.unpin : R.string.pin));
+        pm.getMenu().add(0, 2, 0, getString(R.string.delete_session));
+        pm.setOnMenuItemClickListener(item -> {
+            int id = item.getItemId();
+            if (id == 1) {
+                setPinned(f, !pinned);
+                rebuildSessionList();
+            } else if (id == 2) {
+                confirmDeleteSession(f);
+            }
+            return true;
+        });
+        pm.show();
+    }
+
+    private void confirmDeleteSession(final File f) {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.delete_session)
+                .setMessage(R.string.delete_session_msg)
+                .setPositiveButton(R.string.delete_ok, (d, w) -> deleteSession(f))
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void deleteSession(File f) {
+        boolean isCurrent = f.equals(currentSessionFile) || f.equals(activeSession);
+        if (isCurrent && busy) {
+            toast(getString(R.string.busy_wait));
+            return;
+        }
+        setPinned(f, false);
+        f.delete();
+        if (f.equals(activeSession)) activeSession = null;
+        if (f.equals(currentSessionFile)) {
+            currentSessionFile = null;
+            transcript.removeAllViews();
+            if (home != null) home.setVisibility(View.VISIBLE);
+            input.setHint(getString(R.string.input_hint_hero));
+        }
+        refreshTopTitle();
+        rebuildSessionList();
     }
 
     private TextView sessionGroupHeader(String group) {
@@ -1222,9 +1481,9 @@ public final class MainActivity extends AppCompatActivity {
         return tv;
     }
 
-    private TextView sessionItem(File f, String title, boolean active) {
+    private TextView sessionItem(File f, String title, boolean active, boolean pinned) {
         TextView tv = new TextView(this);
-        tv.setText(title);
+        tv.setText(pinned ? "📌 " + title : title);
         tv.setTextSize(14);
         tv.setMaxLines(1);
         tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -1233,6 +1492,10 @@ public final class MainActivity extends AppCompatActivity {
         if (active) tv.setBackgroundColor(0x14FFFFFF);
         tv.setClickable(true);
         tv.setOnClickListener(v -> switchSession(f));
+        tv.setOnLongClickListener(v -> {
+            showSessionMenu(v, f, pinned);
+            return true;
+        });
         return tv;
     }
 
@@ -1283,6 +1546,7 @@ public final class MainActivity extends AppCompatActivity {
             if (f.lastModified() > latest.lastModified()) latest = f;
         }
         activeSession = latest;
+        currentSessionFile = latest;
         try {
             renderSavedSession(JsonlSessionLog.load(latest));
         } catch (Exception ignored) {
@@ -1290,14 +1554,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private static String buildSystemPrompt() {
-        return "You are a helpful software engineer assistant running on an Android device (Java native, minimal mode on-device agent harness). "
-                + "You work in a persistent Linux shell: Ubuntu arm64 inside the proroot rootless runtime. "
-                + "The bash tool reuses ONE long-lived shell, so state PERSISTS across calls: the working directory "
-                + "(starting at /root/workspace), exported variables, files and installed packages. Use relative paths, and cd/export to steer state. "
-                + "There are no command restrictions: apt-get install works (common tools and python3 are preinstalled), so does git, compiling, running scripts. "
-                + "Phone storage: 'df -h /' shows the phone's /data partition; if All-Files-Access is granted, shared storage is mounted at /sdcard too. "
-                + "Use the str_replace_editor tool to read and edit source files under /root/workspace (view first, then str_replace exact unique text). "
-                + "Prefer short commands, verify results, and finish every task with a short summary of what you did.";
+        return "You are a helpful software engineer assistant.";
     }
 
     private void hideHome() {
