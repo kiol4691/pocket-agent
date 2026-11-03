@@ -56,8 +56,10 @@ OpenAI 兼容端点（DeepSeek / OpenRouter / vLLM / one-api 等）。
 ## 从源码构建
 
 1. JDK 17 + Android SDK（compileSdk 35，minSdk 26）
-2. 无需额外下载：shim（`libzng.so`）与 Debian rootfs（`assets/debian-rootfs-arm64.bin`）
-   都在仓库里。旧的 proroot 二进制是可选的 —— 没有它只是 proroot 后端不可用
+2. 无需额外下载：shim（`libzng.so`、`libldso.so`）已在仓库里；Debian rootfs 由
+   `tools/make-debian-rootfs.sh` 生成到 `assets/debian-rootfs-arm64.bin`（xz 压缩，51 MB，
+   不入库，见 `.gitignore`）。旧的 proroot 二进制是可选的 —— 没有它只是 proroot 后端不可用，
+   而且它现在改为按需下载 Ubuntu rootfs，不再随包分发
 3. `./gradlew :app:assembleDebug`
 4. 安装到 arm64 真机/模拟器
 

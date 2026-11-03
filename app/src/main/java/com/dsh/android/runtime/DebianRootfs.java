@@ -5,9 +5,16 @@ import android.content.Context;
 import com.dsh.android.util.DebugLog;
 import com.dsh.android.util.IOUtil;
 
+import org.tukaani.xz.XZInputStream;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 
 /**
  * Installs the Debian rootfs that ships inside the APK.
@@ -48,9 +55,23 @@ public final class DebianRootfs {
     /**
      * 用系统自带 toybox tar 解包。返回 false 表示不可用/失败，调用方走 Java 后备。
      */
+    /** xz 魔数：FD 37 7A 58 5A 00。 */
+    private static boolean isXz(File f) {
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] m = new byte[6];
+            if (in.read(m) != 6) return false;
+            return (m[0] & 0xff) == 0xfd && m[1] == 0x37 && m[2] == 0x7a
+                    && m[3] == 0x58 && m[4] == 0x5a && m[5] == 0x00;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     private boolean extractWithToybox(File tarball, File destDir) {
+        // 已经是 .tar（xz 解出来的）就不带压缩标志；否则按 gzip 交给 toybox。
+        String mode = tarball.getName().endsWith(".tar") ? "xf" : "xzf";
         try {
-            Process p = new ProcessBuilder("/system/bin/toybox", "tar", "xzf",
+            Process p = new ProcessBuilder("/system/bin/toybox", "tar", mode,
                     tarball.getAbsolutePath(), "-C", destDir.getAbsolutePath())
                     .redirectErrorStream(true)
                     .start();
@@ -122,12 +143,43 @@ public final class DebianRootfs {
         if (tarball.length() < (1 << 20)) {
             throw new IOException("bundled asset too small: " + tarball.length() + " bytes");
         }
-        // 优先用系统的 toybox tar：它是 C 实现，几十万条目的包几秒就解完，
-        // 而且符号链接/权限由内核按 tar 头处理。IOUtil 的 Java 解包器作为后备
-        // （本机实测它对 99 MB 的包会在 40ms 内"解完"0 个条目，原因待查）。
-        if (!extractWithToybox(tarball, rootfsDir)) {
-            DebugLog.w("bootstrap: toybox tar failed, falling back to Java extractor");
-            IOUtil.extractTarGz(tarball, rootfsDir);
+
+        // 压缩格式按魔数判断，不写死：xz 先由 Java 解到 .tar 再交给 toybox，
+        // gzip 直接交给 toybox（它的 -z 是内置 zlib）。
+        // 设备上没有 xz 二进制 —— toybox 的 -J 只是 exec "xz"，实测报
+        // "tar: exec xz: No such file or directory"，所以 xz 这一层只能自己解。
+        File payload = tarball;
+        if (isXz(tarball)) {
+            payload = new File(rootfsDir.getParentFile(), "debian-rootfs.tar");
+            long t1 = System.currentTimeMillis();
+            long total = 0;
+            try (XZInputStream in = new XZInputStream(
+                         new BufferedInputStream(new FileInputStream(tarball), 1 << 16));
+                 OutputStream out = new BufferedOutputStream(
+                         new FileOutputStream(payload), 1 << 16)) {
+                byte[] buf = new byte[1 << 16];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                    total += n;
+                }
+            }
+            DebugLog.i("bootstrap: xz -> " + total + " bytes in "
+                    + (System.currentTimeMillis() - t1) + "ms");
+        }
+
+        // 优先用系统的 toybox tar：C 实现，几十万条目的包几秒解完，
+        // 符号链接/权限按 tar 头处理。IOUtil 的 Java 解包器作为后备。
+        try {
+            if (!extractWithToybox(payload, rootfsDir)) {
+                DebugLog.w("bootstrap: toybox tar failed, falling back to Java extractor");
+                IOUtil.extractTarGz(payload, rootfsDir);
+            }
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            if (payload != tarball) payload.delete();
+            //noinspection ResultOfMethodCallIgnored
+            tarball.delete();
         }
         DebugLog.i("bootstrap: extraction took " + (System.currentTimeMillis() - t0) + "ms");
         if (!installed()) {

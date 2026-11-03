@@ -50,6 +50,9 @@ dependencies {
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // 纯 Java 的 xz 解码（120 KB）：设备上没有 xz 二进制，toybox 的 -J 只是 exec 它，
+    // 所以 xz 压缩的 rootfs 只能由 Java 解到 tar 再交给 toybox 解包。
+    implementation 'org.tukaani:xz:1.10'
 
     implementation 'io.noties.markwon:core:4.6.2'
     implementation 'io.noties.markwon:ext-tables:4.6.2'

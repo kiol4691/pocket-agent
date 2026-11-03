@@ -43,7 +43,10 @@ python3 "$PK/tools/rootfs-identity.py" "$WORK/rootfs" --mode=mark
 echo "== [6/6] 打补丁（seccomp）并打包 =="
 python3 "$PK/tools/patch-glibc-syscalls.py" "$WORK/rootfs" \
     --manifest="$WORK/patch-manifest.json"
-tar -czf "$OUT" --hard-dereference -C "$WORK/rootfs" .
+# xz 而不是 gzip：同一份 rootfs 从 97 MB 降到 51 MB（-47%）。
+# 代价是设备端多一步 Java 解压（toybox 的 -J 只是 exec 外部 xz，真机上没有），
+# 见 DebianRootfs 里的魔数判断。构建慢（-9e 约 4 分钟），但只跑一次。
+XZ_OPT="-9e -T0" tar -cJf "$OUT" --hard-dereference -C "$WORK/rootfs" .
 
 ls -lh "$OUT"
 echo "完成：$OUT"
