@@ -46,15 +46,73 @@ public final class DebianRootfs {
 
     private final Context context;
     private final File rootfsDir;
+    private final File nativeLibDir;
 
     public DebianRootfs(ProrootRuntime runtime, Context context) {
         this.context = context.getApplicationContext();
         this.rootfsDir = runtime.rootfsDir();
+        this.nativeLibDir = new File(context.getApplicationInfo().nativeLibraryDir);
     }
 
     /**
      * 用系统自带 toybox tar 解包。返回 false 表示不可用/失败，调用方走 Java 后备。
      */
+    /**
+     * 原生 xz（若存在 jniLibs/libxz.so）。
+     *
+     * **真机结论：装不上。** 用 zig 交叉编译的静态 musl xz（264 KB）在 app 进程里
+     * 一启动就被 seccomp 杀掉（rc=159 = SIGSYS，6 ms，输出 0 字节），单线程版同样。
+     * 讽刺的是这正是不需要 shim 的场景：它必须在 rootfs 解出来之前运行，
+     * 而 shim 只能注入动态链接的 guest 程序。静态二进制的 syscall 号在寄存器里，
+     * 码型扫描也抓不到（整份二进制只有 1 个 movz x8 站点，是 rt_sigreturn）。
+     *
+     * 所以这段代码目前是"有就用、没有就走 Java"的备用通道：将来若把 xz 放进
+     * rootfs（动态链接 glibc、可被 shim 覆盖），或者改用 zstd-jni 这类 in-process
+     * 的 JNI 库，可以复用。
+     */
+    private boolean decompressWithNativeXz(File src, File dst) {
+        File xz = new File(nativeLibDir, "libxz.so");
+        if (!xz.isFile()) {
+            DebugLog.i("bootstrap: native xz not bundled, using Java decoder");
+            return false;
+        }
+        long t0 = System.currentTimeMillis();
+        try {
+            Process p = new ProcessBuilder(xz.getAbsolutePath(), "-dc", src.getAbsolutePath())
+                    .redirectOutput(dst)
+                    // Android 的 ProcessBuilder 没有 Redirect.DISCARD（API 35 也没有），用 /dev/null
+                    .redirectError(new File("/dev/null"))
+                    .start();
+            int rc = p.waitFor();
+            long n = dst.length();
+            DebugLog.i("bootstrap: native xz rc=" + rc + " -> " + n + " bytes in "
+                    + (System.currentTimeMillis() - t0) + "ms");
+            return rc == 0 && n > (1 << 20);
+        } catch (Exception e) {
+            DebugLog.w("bootstrap: native xz failed: " + e);
+            return false;
+        }
+    }
+
+    /** 纯 Java 解码（后备）：不依赖任何二进制，但慢（15 MB/s 量级）。 */
+    private void decompressWithJavaXz(File src, File dst) throws IOException {
+        long t1 = System.currentTimeMillis();
+        long total = 0;
+        try (XZInputStream in = new XZInputStream(
+                     new BufferedInputStream(new FileInputStream(src), 1 << 16));
+             OutputStream out = new BufferedOutputStream(
+                     new FileOutputStream(dst), 1 << 16)) {
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                total += n;
+            }
+        }
+        DebugLog.i("bootstrap: java xz -> " + total + " bytes in "
+                + (System.currentTimeMillis() - t1) + "ms");
+    }
+
     /** xz 魔数：FD 37 7A 58 5A 00。 */
     private static boolean isXz(File f) {
         try (InputStream in = new FileInputStream(f)) {
@@ -154,21 +212,9 @@ public final class DebianRootfs {
         File payload = tarball;
         if (isXz(tarball)) {
             payload = new File(rootfsDir.getParentFile(), "debian-rootfs.tar");
-            long t1 = System.currentTimeMillis();
-            long total = 0;
-            try (XZInputStream in = new XZInputStream(
-                         new BufferedInputStream(new FileInputStream(tarball), 1 << 16));
-                 OutputStream out = new BufferedOutputStream(
-                         new FileOutputStream(payload), 1 << 16)) {
-                byte[] buf = new byte[1 << 16];
-                int n;
-                while ((n = in.read(buf)) > 0) {
-                    out.write(buf, 0, n);
-                    total += n;
-                }
+            if (!decompressWithNativeXz(tarball, payload)) {
+                decompressWithJavaXz(tarball, payload);
             }
-            DebugLog.i("bootstrap: xz -> " + total + " bytes in "
-                    + (System.currentTimeMillis() - t1) + "ms");
         }
 
         // 优先用系统的 toybox tar：C 实现，几十万条目的包几秒解完，
