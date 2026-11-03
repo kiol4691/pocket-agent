@@ -94,6 +94,9 @@ Output is merged stdout+stderr with a 256 KB cap, exit code appended for the mod
 ## Limitations
 
 - **arm64 only** (the shim is built for aarch64); x86_64 emulators will not work
+- **targetSdk 28 on purpose**: Android 10+ blocks `execve` of files under the app data
+  directory (W^X), and every guest command lives there. pocketroot's shim uses real
+  `execve`, so targetSdk has to stay below 29 — meaning sideload only, no Play Store
 - Single agent loop, three tools (upstream harness's subagent / LSP / workflow / web UI are not ported)
 - The bundled Debian rootfs is a **modified** image (seccomp patches + a modification notice);
   it is not an official Debian build. Distribution names and trademarks remain with their owners

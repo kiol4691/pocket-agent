@@ -77,8 +77,11 @@ public final class DebianRootfs {
 
     /** 关键文件齐了没有（没齐说明解包失败或被清过）。 */
     public boolean installed() {
-        return new File(rootfsDir, "bin/bash").isFile()
-                && new File(rootfsDir, "usr/bin/python3").exists()
+        // python3 在 Debian 的 python 镜像里装到 /usr/local/bin（不是 /usr/bin），
+        // 只查后者会让「解包成功」被判成失败，于是每次启动都重解一遍 346 MB。
+        boolean py = new File(rootfsDir, "usr/local/bin/python3").exists()
+                || new File(rootfsDir, "usr/bin/python3").exists();
+        return new File(rootfsDir, "bin/bash").isFile() && py
                 && new File(rootfsDir, LD_SO).exists();
     }
 

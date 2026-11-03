@@ -91,6 +91,9 @@ bash 工具通过 `exec setsid` 启动 `<rootfs>/lib/ld-linux-aarch64.so.1 /bin/
 ## 已知限制
 
 - **仅 arm64**（shim 按 aarch64 编译）；x86_64 模拟器不可用
+- **targetSdk 刻意留在 28**：Android 10 起禁止 execve app 数据目录下的文件（W^X），
+  而 guest 的每条命令都在 rootfs 里；pocketroot 走真实 execve，绕不过去。
+  代价是只能侧载，不能上 Google Play
 - 单循环 + 三工具（上游的 subagent / LSP / workflow / Web UI 未移植）
 - 内置的 Debian rootfs 是**修改版**（打了 seccomp 补丁并加了修改版告知），不是 Debian 官方镜像；
   发行版名称与商标归各自权利人所有

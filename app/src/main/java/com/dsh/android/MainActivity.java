@@ -180,8 +180,9 @@ public final class MainActivity extends AppCompatActivity {
 
         // 无 UI 的验证通道（见 runDebugCommand）：等 autoSetup 把 rootfs 备好再执行。
         final String dbgCmd = getIntent().getStringExtra("pocketroot_cmd");
-        if (dbgCmd != null && !dbgCmd.isEmpty()) {
-            main.postDelayed(() -> runDebugCommand(dbgCmd), 20_000);
+        final boolean dbgPersist = getIntent().getBooleanExtra("pocketroot_persist", false);
+        if ((dbgCmd != null && !dbgCmd.isEmpty()) || dbgPersist) {
+            main.postDelayed(() -> runDebugCommand(dbgCmd == null ? "" : dbgCmd), 20_000);
         }
     }
 
@@ -1066,10 +1067,20 @@ public final class MainActivity extends AppCompatActivity {
      * 这是验证运行时（shim / rootfs / 工具链）唯一的自动化通道。
      */
     private void runDebugCommand(final String cmd) {
+        final boolean persist = getIntent().getBooleanExtra("pocketroot_persist", false);
         executor.execute(() -> {
             String out;
             try {
-                out = runtime.runtime().runBash(cmd, 300_000L);
+                if (persist) {
+                    // 持久会话是 BashTool 真正用的路径：连跑两条，验证 cwd/环境变量是否跨调用保留。
+                    String a = runtime.runtime().runBashPersistent(
+                            "cd /tmp && export PKR=ok && echo first:$(pwd)", 60_000L);
+                    String b = runtime.runtime().runBashPersistent(
+                            "echo second:$(pwd) PKR=$PKR", 60_000L);
+                    out = a + "\n--- next call ---\n" + b;
+                } else {
+                    out = runtime.runtime().runBash(cmd, 300_000L);
+                }
             } catch (Exception e) {
                 out = "Error: " + e;
             }
