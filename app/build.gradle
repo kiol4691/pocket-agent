@@ -9,12 +9,23 @@ android {
     defaultConfig {
         applicationId "com.dsh.android"
         minSdk 26
-        targetSdk 34
-        versionCode 1
-        versionName "0.1.0"
+        // targetSdk 28 是**功能前提**，不是疏忽：
+        // Android 10 起（targetSdk ≥ 29）禁止 execve app 数据目录下的文件（W^X），
+        // 而 guest 的每条命令（/usr/bin/sh、python3…）都在 rootfs 里，exec 会直接
+        // Permission denied。pocketroot 的 shim 走真实 execve，绕不过这条，只能把
+        // targetSdk 留在 29 以下。代价是不能上 Google Play（侧载分发）。
+        targetSdk 28
+        // 集成 pocketroot 运行时后递增，避免被当成降级安装（设备上已有 versionCode 8）
+        versionCode 9
+        versionName "0.4.0"
     }
 
     buildTypes {
+        debug {
+            // 设备上已有一个用别的密钥签名的 com.dsh.android（0.3.0），签名不匹配无法覆盖安装。
+            // 给 debug 包加后缀，测试时与旧版并存，不动用户已有数据。
+            applicationIdSuffix ".pkr"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

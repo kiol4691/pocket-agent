@@ -45,6 +45,36 @@ public final class DebianRootfs {
         this.rootfsDir = runtime.rootfsDir();
     }
 
+    /**
+     * 用系统自带 toybox tar 解包。返回 false 表示不可用/失败，调用方走 Java 后备。
+     */
+    private boolean extractWithToybox(File tarball, File destDir) {
+        try {
+            Process p = new ProcessBuilder("/system/bin/toybox", "tar", "xzf",
+                    tarball.getAbsolutePath(), "-C", destDir.getAbsolutePath())
+                    .redirectErrorStream(true)
+                    .start();
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream()))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (sb.length() < 2000) sb.append(line).append("\n");
+                }
+            }
+            int rc = p.waitFor();
+            if (rc != 0) {
+                DebugLog.w("toybox tar rc=" + rc + ": " + sb);
+                return false;
+            }
+            // toybox 对个别条目报错仍可能返回 0（例如硬链接），用关键文件兜底判断
+            return new File(destDir, "bin/bash").isFile();
+        } catch (Exception e) {
+            DebugLog.w("toybox tar unavailable: " + e);
+            return false;
+        }
+    }
+
     /** 关键文件齐了没有（没齐说明解包失败或被清过）。 */
     public boolean installed() {
         return new File(rootfsDir, "bin/bash").isFile()
@@ -69,9 +99,34 @@ public final class DebianRootfs {
             throw new IOException("Cannot create " + rootfsDir);
         }
         progress.onProgress("Extracting bundled Debian rootfs (about 350 MB, one minute)…");
-        try (InputStream in = context.getAssets().open(BUNDLED_ASSET)) {
-            IOUtil.extractTarGz(in, rootfsDir);
+        // 先把资产落到磁盘再解：AssetManager 的流是压缩条目的解码流，
+        // 直接喂给 tar 解包器时行为依赖实现细节（本机实测读到 0 字节就 EOF）。
+        // 落盘还有一个好处：解包失败时能看见真实字节数。
+        File tarball = new File(rootfsDir.getParentFile(), "debian-rootfs.tar.gz");
+        long t0 = System.currentTimeMillis();
+        try (InputStream in = context.getAssets().open(BUNDLED_ASSET);
+             java.io.FileOutputStream out = new java.io.FileOutputStream(tarball)) {
+            byte[] buf = new byte[1 << 16];
+            long total = 0;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                total += n;
+            }
+            DebugLog.i("bootstrap: copied asset " + total + " bytes in "
+                    + (System.currentTimeMillis() - t0) + "ms");
         }
+        if (tarball.length() < (1 << 20)) {
+            throw new IOException("bundled asset too small: " + tarball.length() + " bytes");
+        }
+        // 优先用系统的 toybox tar：它是 C 实现，几十万条目的包几秒就解完，
+        // 而且符号链接/权限由内核按 tar 头处理。IOUtil 的 Java 解包器作为后备
+        // （本机实测它对 99 MB 的包会在 40ms 内"解完"0 个条目，原因待查）。
+        if (!extractWithToybox(tarball, rootfsDir)) {
+            DebugLog.w("bootstrap: toybox tar failed, falling back to Java extractor");
+            IOUtil.extractTarGz(tarball, rootfsDir);
+        }
+        DebugLog.i("bootstrap: extraction took " + (System.currentTimeMillis() - t0) + "ms");
         if (!installed()) {
             throw new IOException("rootfs extraction incomplete: " + rootfsDir);
         }

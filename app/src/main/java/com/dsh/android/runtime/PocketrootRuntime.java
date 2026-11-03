@@ -30,8 +30,15 @@ import java.util.Map;
 public final class PocketrootRuntime extends ProrootRuntime {
 
     private static final String SHIM_NAME = "libzng.so";
-    /** glibc rootfs 的动态链接器（rootfs 内路径）。 */
-    private static final String LD_SO = "lib/ld-linux-aarch64.so.1";
+    /**
+     * 动态链接器的**副本**，随 APK 打进 nativeLibraryDir。
+     *
+     * 不能直接 exec rootfs 里的那份：targetSdk ≥ 29 时 Android 禁止执行 app 数据目录
+     * 下的文件（W^X，实测报 Permission denied / exit 126）。nativeLibraryDir 是
+     * apk_data_file，仍允许 exec —— proroot 当年把 launcher 放这里也是同一个原因。
+     * 这份副本来自 Debian rootfs 的 /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1。
+     */
+    private static final String LD_SO_LIB = "libldso.so";
 
     public PocketrootRuntime(Context context) {
         super(context);
@@ -47,12 +54,19 @@ public final class PocketrootRuntime extends ProrootRuntime {
         return "pocketroot shim (" + SHIM_NAME + ")";
     }
 
-    /** argv: ld.so <shell> [args…] —— shim 通过 LD_PRELOAD 注入，不进 argv。 */
+    /**
+     * argv: <libldso.so> <rootfs 里的 shell 绝对路径> [args…]
+     *
+     * 注意第二个参数必须是**宿主路径**（rootfs 下的真实文件），不能是 guest 的 /bin/bash：
+     * ld.so 是原生程序，它按真实路径打开目标 ELF，而 shim 这时还没初始化，翻译不了。
+     * 一旦 bash 起来，它 exec 的命令走 PATH（guest 路径），才由 shim 负责翻译。
+     */
     @Override
     protected List<String> launchCommand(String shell) {
         List<String> args = new ArrayList<>();
-        args.add(new File(rootfsDir, LD_SO).getAbsolutePath());
-        args.add(shell);
+        args.add(new File(nativeLibDir, LD_SO_LIB).getAbsolutePath());
+        args.add(new File(rootfsDir, shell.startsWith("/") ? shell.substring(1) : shell)
+                .getAbsolutePath());
         return args;
     }
 
