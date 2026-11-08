@@ -35,6 +35,7 @@ public final class GuestTools {
     }
 
     public static void install(Context ctx, File root) {
+        installCompat(ctx, root);
         if (new File(root, MARKER).isFile()) return;
         File bin = new File(root, "usr/local/bin");
         if (!bin.isDirectory() && !bin.mkdirs()) return;
@@ -57,4 +58,64 @@ public final class GuestTools {
             DebugLog.w("GuestTools: " + e);
         }
     }
+
+    /**
+     * 兼容层：**不随 marker 跳过**，已经解包过的 rootfs 也要补上。
+     *
+     * 1. etc/apt/apt.conf.d/99-pocketroot
+     *    apt-get 自己调 dpkg，不继承上一条 dpkg 命令行的 --force-not-root，
+     *    否则 apt-get install 直接报 "requested operation requires superuser privilege"。
+     *    写进 apt 配置后，所有 apt 操作自动带上。
+     *
+     * 2. usr/local/bin/ldconfig
+     *    Debian 的 ldconfig 是 static-pie（无 PT_INTERP），不加载 shim、路径不翻译，
+     *    直接跑会对 Android 的真实 / 操作。包装脚本把 "-r /" 映射到 host rootfs。
+     *    libc-bin 的 postinst 正是因为这个退出 127，长期停在 half-configured。
+     */
+    public static void installCompat(Context ctx, File root) {
+        try {
+            writeIfChanged(new File(root, "etc/apt/apt.conf.d/99-pocketroot"),
+                    APT_CONF.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            File lc = new File(root, "usr/local/bin/ldconfig");
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            try (InputStream in = ctx.getAssets().open("ldconfig.sh")) {
+                byte[] b = new byte[1 << 12];
+                int n;
+                while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+            }
+            if (writeIfChanged(lc, bo.toByteArray())) {
+                //noinspection ResultOfMethodCallIgnored
+                lc.setExecutable(true, false);
+            }
+        } catch (Exception e) {
+            DebugLog.w("GuestTools: compat " + e);
+        }
+    }
+
+    /** 内容不同才写；返回是否真的写了。 */
+    private static boolean writeIfChanged(File f, byte[] want) throws Exception {
+        if (f.isFile() && f.length() == want.length) {
+            byte[] have = new byte[want.length];
+            try (InputStream in = new java.io.FileInputStream(f)) {
+                int off = 0;
+                while (off < have.length) {
+                    int n = in.read(have, off, have.length - off);
+                    if (n <= 0) break;
+                    off += n;
+                }
+                if (off == have.length && java.util.Arrays.equals(have, want)) return false;
+            }
+        }
+        File p = f.getParentFile();
+        if (p != null && !p.isDirectory() && !p.mkdirs()) return false;
+        try (OutputStream out = new BufferedOutputStream(new FileOutputStream(f), 1 << 12)) {
+            out.write(want);
+        }
+        return true;
+    }
+
+    private static final String APT_CONF =
+            "// pocketroot: guest runs as an unprivileged Android uid, not root.\n"
+            + "// apt-get invokes dpkg itself and does NOT inherit an earlier dpkg's flags.\n"
+            + "Dpkg::Options { \"--force-not-root\"; };\n";
 }

@@ -252,6 +252,8 @@ public final class DebianRootfs {
             //noinspection ResultOfMethodCallIgnored
             pimg.setExecutable(true, false);
             writeAsset("pimg-patch.py", new File(lib, "patch-glibc.py"));
+            // apt 的 force-not-root 配置 + ldconfig 包装（幂等，老 rootfs 也补）
+            GuestTools.installCompat(context, rootfsDir);
             DebugLog.i("bootstrap: pimg + patcher installed");
         } catch (Exception e) {
             DebugLog.w("bootstrap: installTools failed: " + e);
