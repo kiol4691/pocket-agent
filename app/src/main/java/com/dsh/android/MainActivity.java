@@ -1467,7 +1467,8 @@ public final class MainActivity extends AppCompatActivity {
         // 把这些 guest 路径映射到 rootfs / oci 目录，而不是一律塞进 workspace。
         com.dsh.android.tools.FsPaths.mounts(
                 runtime.runtime().rootfsDir().toPath(),
-                new java.io.File(getFilesDir(), "oci").toPath());
+                new java.io.File(getFilesDir(), "oci").toPath(),
+                getFilesDir().toPath());
         ToolRegistry tools = new ToolRegistry();
         tools.register(new BashTool(runtime.runtime()));
         tools.register(new com.dsh.android.tools.ContainerTool(this));

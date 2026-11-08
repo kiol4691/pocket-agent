@@ -23,14 +23,16 @@ public final class FsPaths {
 
     private static volatile Path rootfsDir;
     private static volatile Path imagesDir;
+    private static volatile Path filesDir;
 
     private FsPaths() {
     }
 
     /** 由启动流程注入；null 表示该挂载不存在。 */
-    public static void mounts(Path rootfs, Path images) {
+    public static void mounts(Path rootfs, Path images, Path files) {
         rootfsDir = rootfs == null ? null : rootfs.toAbsolutePath().normalize();
         imagesDir = images == null ? null : images.toAbsolutePath().normalize();
+        filesDir = files == null ? null : files.toAbsolutePath().normalize();
     }
 
     private static Path inside(Path base, String relative, String original) throws IOException {
@@ -72,6 +74,28 @@ public final class FsPaths {
                     .toAbsolutePath().normalize();
             return inside(host, p.substring(hostSd.length()), p);
         }
+        // 宿主侧的 app 私有路径（日志、报错里经常出现）：只反解 guest 认识的三块，
+        // 其余一律拒绝，避免把 /data/user/0/<pkg>/... 这类宿主路径回显给模型。
+        Path files = filesDir;
+        if (files != null && (p.equals(files.toString()) || p.startsWith(files + "/"))) {
+            String rel = p.substring(files.toString().length());
+            while (rel.startsWith("/")) rel = rel.substring(1);
+            if (rel.equals("rootfs") || rel.startsWith("rootfs/")) {
+                String sub = rel.substring("rootfs".length());
+                if (rootfsDir == null) throw new IOException("Runtime is not ready yet.");
+                return inside(rootfsDir, sub, p);
+            }
+            if (rel.equals("workspace") || rel.startsWith("workspace/")) {
+                return inside(ws, rel.substring("workspace".length()), p);
+            }
+            if (rel.equals("oci") || rel.startsWith("oci/")) {
+                if (imagesDir == null) throw new IOException("/images is not mounted.");
+                return inside(imagesDir, rel.substring("oci".length()), p);
+            }
+            throw new IOException("Not exposed to the guest: " + p
+                    + ". Use a guest path such as /etc/... or " + ROOT + "/...");
+        }
+
         Path root = rootfsDir;
         if (root == null) {
             throw new IOException("No rootfs mounted yet; cannot resolve " + p
