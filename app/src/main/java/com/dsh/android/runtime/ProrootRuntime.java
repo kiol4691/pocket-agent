@@ -34,6 +34,40 @@ public class ProrootRuntime {
      * cwd/env/state across tool calls. Each call writes the command then a unique marker echo line;
      * the reader thread returns the output accumulated up to the marker. On per-call timeout the
      * whole session process group is killed and restarted lazily on the next call. */
+    /**
+     * 持久 shell 的启动前置脚本：**在 shell 里**拦住"删掉 rootfs 骨架"的 rm。
+     *
+     * 为什么必须放在 shell 里：`cd / && rm -rf *` 的真实目标由 shell 展开，静态分析
+     * 只看到字面量 `*`，永远猜不准；而函数拿到的是**展开之后**的参数，逐个 `pwd -P`
+     * 解析成真实路径再比对，才是可靠的。
+     *
+     * 保护范围：根目录本身 + 所有顶层目录 + /root（家目录）。`rm -rf /root/workspace/x`、
+     * `rm -rf /var/lib/apt/lists/*` 这类正常清理不受影响。
+     *
+     * 边界：它只是"减速带"。`command rm`、`\rm`、`sh -c 'rm ...'`（dash 没有这个函数）、
+     * 静态二进制仍能绕过 —— 真正的兜底是工具层检测到 rootfs 坏了之后的自愈。
+     */
+    private static final String GUARD_PRELUDE =
+            "__pkr_guard_rm() {\n"
+            + "  local a p\n"
+            + "  for a in \"$@\"; do\n"
+            + "    case \"$a\" in -*) continue;; esac\n"
+            + "    if [ -d \"$a\" ] && [ ! -L \"$a\" ]; then\n"
+            + "      p=$(cd -- \"$a\" 2>/dev/null && pwd -P) || p=\"$a\"\n"
+            + "    else\n"
+            + "      p=\"$a\"\n"
+            + "    fi\n"
+            + "    case \"$p\" in\n"
+            + "      /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/root/workspace"
+            + "|/run|/sbin|/sdcard|/srv|/storage|/sys|/usr|/var)\n"
+            + "        printf 'rm: 拒绝删除受保护目录 %s（Pocket Agent 护栏）\\n' \"$p\" >&2; return 1;;\n"
+            + "    esac\n"
+            + "  done\n"
+            + "  command rm \"$@\"\n"
+            + "}\n"
+            + "rm() { __pkr_guard_rm \"$@\"; }\n"
+            + "export -f __pkr_guard_rm rm 2>/dev/null || true\n";
+
     private static final long PB_DEFAULT_TIMEOUT_MS = 300_000L;
     private final Object pbLock = new Object();
     private Process pbProc;
@@ -43,6 +77,8 @@ public class ProrootRuntime {
     private StringBuilder pbOut;
     private boolean pbWait;
     private boolean pbDone;
+    /** 新起的 shell 还没灌过护栏前置脚本。 */
+    private volatile boolean pbNeedsGuard = true;
     private String pbRc;
     private volatile boolean pbDead = true;
 
@@ -57,7 +93,10 @@ public class ProrootRuntime {
                     + "options timeout:2 attempts:2 rotate\n";
     private volatile boolean netTuned;
 
+    private final Context appContext;
+
     public ProrootRuntime(Context context) {
+        this.appContext = context.getApplicationContext();
         File filesDir = context.getFilesDir();
         this.runDir = new File(filesDir, "run");
         this.rootfsDir = new File(filesDir, "rootfs");
@@ -95,6 +134,10 @@ public class ProrootRuntime {
         for (File d : new File[]{runDir, rootfsDir, workspaceDir}) {
             if (!d.isDirectory() && !d.mkdirs()) throw new IOException("Cannot create directory " + d);
         }
+        // 当前 Android uid 不在 /etc/passwd 时，stat %U / id -un 会显示 UNKNOWN；
+        // 每次起会话前补一条（幂等，已存在就不动）。
+        ContainerRunner.ensureAccount(rootfsDir);
+        GuestTools.install(appContext, rootfsDir);
     }
 
     /** Verify the proroot launcher and its companions exist in the APK native library dir. */
@@ -216,11 +259,27 @@ public class ProrootRuntime {
             pbDone = false;
             pbWait = true;
             try {
+                // 新 shell 的第一条命令前先灌护栏（见 GUARD_PRELUDE）。
+                if (pbNeedsGuard) {
+                    pbIn.write(GUARD_PRELUDE);
+                    pbNeedsGuard = false;
+                }
+                // 命令包进 { } 并把 stdin 接到 /dev/null（v0.1.2 那条线的修法，我们这条线一直没有）：
+                // 读 stdin 的命令（adb pair / sudo / ssh / read / 交互式提示）会把排队中的
+                // 结束标记当成输入吃掉，于是这次调用挂到超时；常驻子进程（adb fork-server）
+                // 更会吃掉之后所有标记，表现为所有调用永远 "Running"。
+                // 用花括号而不是圆括号：花括号在当前 shell 里执行，cd / export 仍然跨调用保留。
+                pbIn.write("{\n");
                 pbIn.write(command);
-                pbIn.write("\n");
-                pbIn.write("echo \"");
+                pbIn.write("\n} </dev/null\n");
+                // 结束标记必须**自成一行**：命令的最后一段输出可能没有换行
+                // （printf abc / echo -n / 进度条用 \r 刷新），直接 echo 标记会拼成
+                // "abc__DSH_RC_x__=0"，读取端按行首匹配就永远等不到标记 —— 表现就是
+                // 一条 1 ms 的命令被报成 TIMEOUT。所以先输出一个换行再打标记。
+                // 多出来的空行在返回前被 trim 掉，不影响结果。
+                pbIn.write("printf '\\n%s=%s\\n' '");
                 pbIn.write(pbMarker);
-                pbIn.write("\"=$?\n");
+                pbIn.write("' \"$?\"\n");
                 pbIn.flush();
             } catch (IOException e) {
                 pbWait = false;
@@ -241,6 +300,12 @@ public class ProrootRuntime {
         }
 
         String text = out.toString().trim();
+        // 自愈提示：命令把 rootfs 关键文件删了（rm -rf / 之类）时，别让后续调用一头雾水。
+        if (done && !new File(rootfsDir, "bin/bash").isFile()) {
+            killPersistentBash();
+            return (text.isEmpty() ? "(no output)" : text)
+                    + "\n[⚠ rootfs 已被破坏：bin/bash 不存在。重启应用会自动重新解包（约 12 秒）。]";
+        }
         if (done && pbRc != null) {
             String rc = pbRc.startsWith("=") ? pbRc.substring(1) : pbRc;
             return (text.isEmpty() ? "(no output)" : text) + "\n[exit code: " + rc + "]";
@@ -368,6 +433,7 @@ public class ProrootRuntime {
         pbProc = proc;
         pbPid = pid;
         pbDead = false;
+        pbNeedsGuard = true;
         pbMarker = "__DSH_RC_" + Integer.toHexString((int) (Math.random() * 0xffffff)) + "__";
         pbIn = new java.io.OutputStreamWriter(proc.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8);
         startPersistentReader(proc);
@@ -382,7 +448,7 @@ public class ProrootRuntime {
                 int c;
                 while ((c = is.read()) != -1) {
                     if (c == '\n') {
-                        deliverPersistentLine(line, used);
+                        deliverPersistentLine(proc, line, used);
                         used = 0;
                     } else if (used < line.length) {
                         line[used++] = (byte) c;
@@ -395,6 +461,10 @@ public class ProrootRuntime {
                 } catch (IOException ignored) {
                 }
                 synchronized (pbLock) {
+                    // 世代检查：这条线程可能是上一次 TIMEOUT 后被 kill 的旧 shell，
+                    // 它的 finally 迟到时会踩掉新 shell 的状态（pbDead/pbDone 是共享字段），
+                    // 表现是下一条命令莫名报 "persistent shell exited" 或丢掉 cwd/变量。
+                    if (pbProc != proc) return;
                     if (used > 0) {
                         String s = new String(line, 0, used, java.nio.charset.StandardCharsets.UTF_8);
                         if (pbWait && !s.startsWith(pbMarker)) appendCappedLine(pbOut, s);
@@ -413,10 +483,10 @@ public class ProrootRuntime {
         t.start();
     }
 
-    private void deliverPersistentLine(byte[] line, int used) {
+    private void deliverPersistentLine(Process proc, byte[] line, int used) {
         String s = new String(line, 0, used, java.nio.charset.StandardCharsets.UTF_8);
         synchronized (pbLock) {
-            if (!pbWait) return;
+            if (pbProc != proc || !pbWait) return;
             if (s.startsWith(pbMarker)) {
                 pbRc = s.substring(pbMarker.length());
                 pbDone = true;

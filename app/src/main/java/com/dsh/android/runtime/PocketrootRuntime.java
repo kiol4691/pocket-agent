@@ -89,6 +89,14 @@ public final class PocketrootRuntime extends ProrootRuntime {
         // PATH 必须显式给：默认会继承 Android 的 PATH（/system/bin），guest 里那些路径不存在。
         // python3 在 /usr/local/bin（Debian 的 python 镜像装在 /usr/local）。
         env.put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+        // Android 把 TMPDIR 指到 app 的 cache（宿主路径）；guest 里不存在，
+        // dpkg-deb / apt 建临时目录必失败。固定到 guest 的 /tmp。
+        env.put("TMPDIR", "/tmp");
+        // pimg（镜像管理）：客体路径 + 同一目录的宿主路径（run 时需要把 ZNG_ROOT 指到宿主路径）
+        File images = new File(rootfsDir.getParentFile(), "oci");
+        env.put("PIMG_IMAGES", "/images");
+        env.put("PIMG_HOST_IMAGES", images.getAbsolutePath());
+        env.put("PIMG_PATCHER", "/usr/local/lib/pimg/patch-glibc.py");
     }
 
     /**
@@ -104,6 +112,12 @@ public final class PocketrootRuntime extends ProrootRuntime {
         sb.append("/dev\t/dev\n");
         sb.append("/sys\t/sys\n");
         sb.append(workspaceDir.getAbsolutePath()).append("\t/root/workspace\n");
+        // 镜像目录：pimg 在 guest 里看到的 /images 就是 files/oci
+        // （别用 files/images —— 那是聊天图片的目录）
+        File images = new File(rootfsDir.getParentFile(), "oci");
+        //noinspection ResultOfMethodCallIgnored
+        images.mkdirs();
+        sb.append(images.getAbsolutePath()).append("\t/images\n");
         if (storageAccessGranted()) {
             File guestSdcard = new File(rootfsDir, "sdcard");
             if (guestSdcard.isDirectory() || guestSdcard.mkdirs()) {

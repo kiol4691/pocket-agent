@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 首页环境行：只留一圈极淡的描边，比实心 chip 更轻 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@android:color/transparent" />
+    <stroke android:width="1dp" android:color="@color/border_light" />
+    <corners android:radius="999dp" />
+</shape>

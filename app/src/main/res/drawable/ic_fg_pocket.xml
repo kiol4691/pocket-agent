@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PocketAgent icon candidate B: head peeking out of a pocket -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- head -->
+    <path
+        android:fillColor="#F4F7FC"
+        android:pathData="M54,47 m-13,0 a13,13 0 1 1 26,0 a13,13 0 1 1 -26,0" />
+    <!-- eyes -->
+    <path
+        android:fillColor="#182338"
+        android:pathData="M49.3,46.5 m-2.7,0 a2.7,2.7 0 1 1 5.4,0 a2.7,2.7 0 1 1 -5.4,0" />
+    <path
+        android:fillColor="#182338"
+        android:pathData="M58.7,46.5 m-2.7,0 a2.7,2.7 0 1 1 5.4,0 a2.7,2.7 0 1 1 -5.4,0" />
+    <!-- smile -->
+    <path
+        android:strokeColor="#182338"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M49.5,51.5 Q54,55.8 58.5,51.5" />
+    <!-- pocket (drawn last so it covers the chin) -->
+    <path
+        android:fillColor="#679EFE"
+        android:pathData="M30,56 h48 l-4.6,20.3 a6.2,6.2 0 0 1 -6,4.8 h-26.8 a6.2,6.2 0 0 1 -6,-4.8 z" />
+</vector>

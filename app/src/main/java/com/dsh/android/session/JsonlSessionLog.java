@@ -28,8 +28,13 @@ public final class JsonlSessionLog {
         if (!sessionsDir.isDirectory() && !sessionsDir.mkdirs()) {
             throw new IOException("Cannot create session dir " + sessionsDir);
         }
-        String name = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date()) + ".jsonl";
-        this.file = new File(sessionsDir, name);
+        String base = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
+        File f = new File(sessionsDir, base + ".jsonl");
+        int n = 1;
+        while (f.exists()) {
+            f = new File(sessionsDir, base + "-" + (n++) + ".jsonl");
+        }
+        this.file = f;
     }
 
     /** Resume an existing session file: new messages append to it. */
@@ -48,6 +53,66 @@ public final class JsonlSessionLog {
         } catch (org.json.JSONException e) {
             throw new IOException("Message serialization failed", e);
         }
+    }
+
+    /** 只解析最后 maxLines 行：启动重放用，避免把整份日志都反序列化一遍。 */
+    public static List<ChatMessage> loadTail(File f, int maxLines) throws IOException {
+        java.util.ArrayDeque<String> tail = new java.util.ArrayDeque<>();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(
+                new FileInputStream(f), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+                if (tail.size() == maxLines) tail.pollFirst();
+                tail.addLast(line);
+            }
+        }
+        List<ChatMessage> out = new ArrayList<>();
+        for (String s : tail) {
+            try {
+                out.add(ChatMessage.fromJson(new JSONObject(s)));
+            } catch (org.json.JSONException ignored) {
+            }
+        }
+        return out;
+    }
+
+    /** 只数行数，不解析 JSON：用于判断是否有更早的消息需要折叠。 */
+    public static int countLines(File f) throws IOException {
+        int n = 0;
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(
+                new FileInputStream(f), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (!line.trim().isEmpty()) n++;
+            }
+        }
+        return n;
+    }
+
+    /** 只读前 scanLines 行找第一条 user 文本：侧栏会话标题用，避免整份日志解析。 */
+    public static String firstUserText(File f, int scanLines) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(
+                new FileInputStream(f), StandardCharsets.UTF_8))) {
+            String line;
+            int n = 0;
+            while ((line = r.readLine()) != null && n++ < scanLines) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                try {
+                    JSONObject o = new JSONObject(line);
+                    if (!"user".equals(o.optString("role"))) continue;
+                    Object cv = o.opt("content");
+                    if (cv instanceof String) {
+                        String c = (String) cv;
+                        if (!c.trim().isEmpty()) return c;
+                    }
+                } catch (org.json.JSONException ignored) {
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return null;
     }
 
     public static List<ChatMessage> load(File f) throws IOException {

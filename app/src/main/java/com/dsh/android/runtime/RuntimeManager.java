@@ -51,5 +51,7 @@ public final class RuntimeManager {
         com.dsh.android.util.DebugLog.i("setup: shim ok, bootstrapping rootfs");
         progress.onProgress("Setting up Debian rootfs…");
         rootfs.bootstrap(progress);
+        // 每次启动都刷新：换网络之后 DNS 会变（rootfs 已就绪时 bootstrap 是空操作）。
+        rootfs.refreshResolvConf();
     }
 }

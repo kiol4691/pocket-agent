@@ -71,15 +71,27 @@ public final class DeepSeekClient {
     /** Call the model. Blocks until the turn completes (streaming deltas via {@code listener}). */
     public AssistantResult chat(List<ChatMessage> messages, JSONArray toolSchemas,
                                 Listener listener, AtomicBoolean cancelFlag) throws IOException, JSONException {
+        return chat(messages, toolSchemas, listener, cancelFlag, null, null);
+    }
+
+    /** maxTokens/temperature 可选：摘要这类内部请求要限长，否则一次压缩就等十几秒。 */
+    public AssistantResult chat(List<ChatMessage> messages, JSONArray toolSchemas,
+                                Listener listener, AtomicBoolean cancelFlag,
+                                Integer maxTokens, Double temperature) throws IOException, JSONException {
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("stream", true);
-        body.put("temperature", 0.2);
-        body.put("tool_choice", "auto");
+        body.put("temperature", temperature == null ? 0.2 : temperature);
+        if (maxTokens != null) body.put("max_tokens", maxTokens);
         JSONArray msgs = new JSONArray();
         for (ChatMessage m : messages) msgs.put(m.toJson());
         body.put("messages", msgs);
-        if (toolSchemas != null && toolSchemas.length() > 0) body.put("tools", toolSchemas);
+        // tool_choice 只在真的带了 tools 时才发：有些端点（含 DeepSeek）对
+        // "有 tool_choice 没有 tools" 的请求直接回 400，而压缩用的摘要请求是没有工具的。
+        if (toolSchemas != null && toolSchemas.length() > 0) {
+            body.put("tools", toolSchemas);
+            body.put("tool_choice", "auto");
+        }
 
         Request request = new Request.Builder()
                 .url(baseUrl + "/chat/completions")

@@ -15,6 +15,8 @@
     <!-- brand / status -->
     <color name="brand">#679EFE</color>                  <!-- deepseek-400 -->
     <color name="brand_tertiary">#34415B</color>         <!-- deepseek-800 -->
+    <color name="brand_text">#9DB6EC</color>          <!-- 选中/按下态的文字 -->
+    <color name="brand_muted">#828C9A</color>         <!-- 选中态行尾 ⋯ -->
     <color name="on_brand">#FFFFFF</color>
     <color name="accent_green">#4ED17E</color>          <!-- green-400 -->
     <color name="accent_green_dark">#23402C</color>

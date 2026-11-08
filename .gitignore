@@ -6,4 +6,20 @@ local.properties
 .DS_Store
 app/src/main/jniLibs/arm64-v8a/libproroot*.so
 # 98 MB 的 rootfs 产物：用 tools/make-debian-rootfs.sh 本地生成（GitHub 单文件上限 100 MB）
-app/src/main/assets/debian-rootfs-arm64.bin
+app/src/main/assets/debian-rootfs-arm64.*.bin
+
+# 旧的双 rootfs 源集（未被 gradle 引用，72 MB + 29 MB 二进制）
+app/src/full/
+app/src/std/
+# 红队测试的生成数据与产物
+tools/redteam/data/
+tools/redteam/artifacts/
+__pycache__/
+*.pyc
+# 发布签名：密钥与口令只留在本机
+keystore.properties
+*.jks
+*.keystore
+
+# 本地发布产物（APK/校验和），只上传到 Release，不进仓库
+dist/

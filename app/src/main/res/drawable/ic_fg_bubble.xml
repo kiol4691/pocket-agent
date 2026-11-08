@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PocketAgent icon candidate C: speech-bubble bot -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- bubble tail -->
+    <path
+        android:fillColor="#679EFE"
+        android:pathData="M37,66 L31,80 L49,68 z" />
+    <!-- bubble body -->
+    <path
+        android:fillColor="#679EFE"
+        android:pathData="M42,36 h24 a12,12 0 0 1 12,12 v10 a12,12 0 0 1 -12,12 h-24 a12,12 0 0 1 -12,-12 v-10 a12,12 0 0 1 12,-12 z" />
+    <!-- eyes -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M45,53 m-4.6,0 a4.6,4.6 0 1 1 9.2,0 a4.6,4.6 0 1 1 -9.2,0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M63,53 m-4.6,0 a4.6,4.6 0 1 1 9.2,0 a4.6,4.6 0 1 1 -9.2,0" />
+</vector>

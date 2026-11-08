@@ -3,7 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Scoped storage All-Files-Access: lets the Ubuntu runtime browse the phone's shared
+    <!-- 读当前网络的 DNS 服务器，写进 guest 的 /etc/resolv.conf（normal 权限，无弹窗）。 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Scoped storage All-Files-Access: lets the Linux runtime browse the phone's shared
          storage (/storage/emulated/0 mounted to /sdcard inside the rootfs). The system still
          requires a one-time user grant under Settings -> All files access; without it the
          runtime falls back to viewing the /data partition via df -h /. -->

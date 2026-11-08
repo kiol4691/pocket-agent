@@ -1,0 +1,14 @@
+{
+  "id": "safe_guard",
+  "name": "Safe Guard",
+  "version": "0.3.0",
+  "apiVersion": 1,
+  "type": "hook",
+  "description": "拦截明显破坏性的 bash 命令（mkfs / dd 写块设备 / rm -rf 根目录）。",
+  "hooks": ["beforeToolCall"],
+  "capabilities": ["veto"],
+  "onError": "deny",
+  "priority": 10,
+  "limits": { "budgetMs": 800, "budgetSteps": 300000 },
+  "entry": "main.js"
+}

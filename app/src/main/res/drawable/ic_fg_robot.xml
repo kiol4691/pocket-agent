@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PocketAgent icon candidate A: rounded robot head + antenna status dot -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- antenna stem -->
+    <path
+        android:strokeColor="#679EFE"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M54,29.5 L54,39" />
+    <!-- antenna status dot (green = ready) -->
+    <path
+        android:fillColor="#4ED17E"
+        android:pathData="M54,26 m-3.8,0 a3.8,3.8 0 1 1 7.6,0 a3.8,3.8 0 1 1 -7.6,0" />
+    <!-- side ears -->
+    <path
+        android:fillColor="#3D6FC4"
+        android:pathData="M29.5,50 h5 a2.5,2.5 0 0 1 2.5,2.5 v6 a2.5,2.5 0 0 1 -2.5,2.5 h-5 a2.5,2.5 0 0 1 -2.5,-2.5 v-6 a2.5,2.5 0 0 1 2.5,-2.5 z" />
+    <path
+        android:fillColor="#3D6FC4"
+        android:pathData="M71,52.5 a2.5,2.5 0 0 1 2.5,-2.5 h5 a2.5,2.5 0 0 1 2.5,2.5 v6 a2.5,2.5 0 0 1 -2.5,2.5 h-5 a2.5,2.5 0 0 1 -2.5,-2.5 z" />
+    <!-- head -->
+    <path
+        android:fillColor="#679EFE"
+        android:pathData="M45,39 h18 a11,11 0 0 1 11,11 v14 a11,11 0 0 1 -11,11 h-18 a11,11 0 0 1 -11,-11 v-14 a11,11 0 0 1 11,-11 z" />
+    <!-- eyes -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M45.5,55.5 m-5,0 a5,5 0 1 1 10,0 a5,5 0 1 1 -10,0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M62.5,55.5 m-5,0 a5,5 0 1 1 10,0 a5,5 0 1 1 -10,0" />
+</vector>

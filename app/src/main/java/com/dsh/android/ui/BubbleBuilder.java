@@ -1,5 +1,10 @@
 package com.dsh.android.ui;
 
+import com.dsh.android.R;
+
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -7,13 +12,16 @@ import android.content.res.Resources;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.text.SpannableStringBuilder;
+import android.text.TextPaint;
 import android.text.Spanned;
 import android.text.method.LinkMovementMethod;
 import android.text.style.BackgroundColorSpan;
+import android.text.style.CharacterStyle;
 import android.text.style.StyleSpan;
 import android.text.style.TypefaceSpan;
 import android.view.Gravity;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -69,6 +77,21 @@ public final class BubbleBuilder {
     private static final class Store {
         final List<Kind> kinds = new ArrayList<>();
         final List<View> views = new ArrayList<>();
+        final StreamState stream = new StreamState();
+    }
+
+    /** 只改绘制期 alpha，不动文本/布局；配合 TextView.invalidate() 做淡入。 */
+    private static final class FadeSpan extends CharacterStyle {
+        float alpha = 0f;
+        @Override public void updateDrawState(TextPaint tp) {
+            tp.setAlpha(Math.round(alpha * 255f));
+        }
+    }
+
+    private static final class StreamState {
+        int plainLen;                 // 上一帧正文长度
+        FadeSpan fade;                // 本次新增文字
+        ValueAnimator fadeAnim;
     }
 
     private BubbleBuilder() {
@@ -91,6 +114,8 @@ public final class BubbleBuilder {
         List<Block> blocks = new ArrayList<>();
         String[] lines = (md == null ? "" : md).split("\n", -1);
         int i = 0, n = lines.length;
+        int holdFrom = n - 1;
+        while (holdFrom >= 0 && lines[holdFrom].trim().isEmpty()) holdFrom--;
         StringBuilder prose = new StringBuilder();
         boolean hasProse = false;
 
@@ -101,6 +126,7 @@ public final class BubbleBuilder {
                 flushProse(blocks, prose, hasProse);
                 hasProse = false;
                 String lang = fence.group(2).trim();
+                String langLower = lang.toLowerCase(java.util.Locale.US);
                 StringBuilder code = new StringBuilder();
                 int j = i + 1;
                 while (j < n && !FENCE_END.matcher(lines[j].trim()).matches()) {
@@ -108,7 +134,11 @@ public final class BubbleBuilder {
                     code.append(lines[j]);
                     j++;
                 }
-                blocks.add(new Block(Kind.CODE, code.toString(), lang, null));
+                if (langLower.equals("math") || langLower.equals("latex") || langLower.equals("tex")) {
+                    blocks.add(new Block(Kind.PROSE, "$$\n" + code + "\n$$\n", null, null));
+                } else {
+                    blocks.add(new Block(Kind.CODE, code.toString(), lang, null));
+                }
                 i = j + 1;
                 continue;
             }
@@ -130,6 +160,9 @@ public final class BubbleBuilder {
                 blocks.add(new Block(Kind.TABLE, null, null, all));
                 i = j;
                 continue;
+            }
+            if (i >= holdFrom && trim.startsWith("|") && !isTableSeparator(trim)) {
+                break;
             }
             prose.append(lines[i]).append('\n');
             hasProse = true;
@@ -163,12 +196,19 @@ public final class BubbleBuilder {
     // --------------------------------------------------------------- sync
 
     public static void sync(LinearLayout bubble, String md, Context ctx, Style style) {
+        sync(bubble, md, ctx, style, false);
+    }
+
+    /** streaming=true 时给尾部新增的文字做淡入；false 时收尾清理。 */
+    public static void sync(LinearLayout bubble, String md, Context ctx, Style style,
+                            boolean streaming) {
         List<Block> blocks = split(md);
         Store store = (Store) bubble.getTag();
         if (store == null) {
             store = new Store();
             bubble.setTag(store);
         }
+        int preViews = store.views.size();
         int common = 0;
         while (common < store.kinds.size() && common < blocks.size()
                 && store.kinds.get(common) == blocks.get(common).kind) {
@@ -178,6 +218,11 @@ public final class BubbleBuilder {
             bubble.removeView(store.views.remove(store.views.size() - 1));
             store.kinds.remove(store.kinds.size() - 1);
         }
+        // A kind-equal prefix can still hide a re-segmentation: while streaming, the growing
+        // PROSE/CODE tail gets "peeled" once a table/fence completes inside it (old [P_big]
+        // becomes new [P_small, TABLE]). Nothing mismatches, yet the kept former-tail view
+        // must be re-rendered from its now-smaller block or stale raw markdown stays visible.
+        boolean peeled = preViews > 0 && common == preViews && blocks.size() > preViews;
         for (int i = common; i < blocks.size(); i++) {
             Block b = blocks.get(i);
             View v = buildView(ctx, b, style);
@@ -185,12 +230,72 @@ public final class BubbleBuilder {
             store.views.add(v);
             store.kinds.add(b.kind);
         }
-        if (store.views.isEmpty()) return;
+        if (store.views.isEmpty()) { stopStream(store.stream); return; }
         for (int i = common; i < store.views.size(); i++) {
             renderInto(ctx, store.views.get(i), blocks.get(i), style);
         }
         renderInto(ctx, store.views.get(store.views.size() - 1),
                 blocks.get(blocks.size() - 1), style);
+        if (peeled) {
+            renderInto(ctx, store.views.get(preViews - 1), blocks.get(preViews - 1), style);
+        }
+        applyStreamTail(store, streaming);
+    }
+
+    // --------------------------------------------------------- streaming tail
+
+    /** PROSE 是 TextView 本身，CODE 卡片取 body，TABLE 没有可流式的主 TextView。 */
+    private static TextView primaryTextView(View v) {
+        if (v instanceof TextView) return (TextView) v;
+        View body = v.findViewById(0x44544142);
+        return body instanceof TextView ? (TextView) body : null;
+    }
+
+    private static void applyStreamTail(Store store, boolean streaming) {
+        StreamState s = store.stream;
+        if (!streaming || store.views.isEmpty()) {
+            stopStream(s);
+            return;
+        }
+        TextView tv = primaryTextView(store.views.get(store.views.size() - 1));
+        if (tv == null) { stopStream(s); return; }
+
+        // renderInto 刚把正文写进去。上一帧的 FadeSpan 随 setText 一起消失，
+        // 那部分文字本就该全亮，所以这里只给「最后一批新字」做淡入，不会整块闪。
+        SpannableStringBuilder ssb = new SpannableStringBuilder(tv.getText());
+        if (s.fadeAnim != null) { s.fadeAnim.cancel(); s.fadeAnim = null; }
+        int prev = Math.min(s.plainLen, ssb.length());
+        if (ssb.length() > prev) {
+            final FadeSpan fade = new FadeSpan();
+            ssb.setSpan(fade, prev, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            s.fade = fade;
+            ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
+            anim.setDuration(160);
+            anim.setInterpolator(new DecelerateInterpolator(1.5f));
+            anim.addUpdateListener(a -> {
+                fade.alpha = (Float) a.getAnimatedValue();
+                tv.invalidate();
+            });
+            anim.addListener(new AnimatorListenerAdapter() {
+                @Override public void onAnimationEnd(Animator a) {
+                    fade.alpha = 1f;
+                    tv.invalidate();
+                }
+            });
+            anim.start();
+            s.fadeAnim = anim;
+        } else {
+            s.fade = null;
+        }
+        s.plainLen = ssb.length();
+        tv.setText(ssb);
+    }
+
+    private static void stopStream(StreamState s) {
+        if (s.fadeAnim != null) { s.fadeAnim.cancel(); s.fadeAnim = null; }
+        if (s.fade != null) s.fade.alpha = 1f;
+        s.fade = null;
+        s.plainLen = 0;
     }
 
     // ---------------------------------------------------------------- views
@@ -209,7 +314,10 @@ public final class BubbleBuilder {
     private static void renderInto(Context ctx, View view, Block b, Style style) {
         if (b.kind == Kind.PROSE) {
             TextView tv = (TextView) view;
-            tv.setText(MarkdownRenderer.render(b.text));
+            // 必须走 markwon.setMarkdown：只有它触发 beforeSetText/afterSetText 钩子，
+            // AsyncDrawableScheduler 才会被调度去渲染 LaTeX 公式。直接 setText(render(...))
+            // 只做了解析，公式会永远停在原文。
+            MarkdownRenderer.setText(tv, b.text);
         } else if (b.kind == Kind.TABLE) {
             renderTableGrid((LinearLayout) view, b.rows, style);
         } else {
@@ -219,9 +327,9 @@ public final class BubbleBuilder {
             TextView copy = (TextView) ((LinearLayout) view).findViewById(0x44544143);
             String tag = (String) copy.getTag();
             if (tag != null && tag.equals(b.text)) {
-                copy.setText("⧉ 已复制");
+                copy.setText(ctx.getString(R.string.copy_copied));
             } else {
-                copy.setText("⧉ 复制");
+                copy.setText(ctx.getString(R.string.copy_code));
             }
             lang.setText(b.lang == null || b.lang.isEmpty() ? "code" : b.lang);
         }
@@ -276,7 +384,7 @@ public final class BubbleBuilder {
 
         TextView copy = new TextView(ctx);
         copy.setId(0x44544143);
-        copy.setText("⧉ 复制");
+        copy.setText(ctx.getString(R.string.copy_code));
         copy.setTextSize(11);
         copy.setTextColor(style.brand);
         copy.setPadding(dp(8), dp(4), dp(8), dp(4));
@@ -316,7 +424,7 @@ public final class BubbleBuilder {
             cm.setPrimaryClip(ClipData.newPlainText("code", code));
             copy.setText("⧉ 已复制");
             copy.setTag(code);
-            Toast.makeText(ctx, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, ctx.getString(R.string.copied_clipboard), Toast.LENGTH_SHORT).show();
         });
         return card;
     }

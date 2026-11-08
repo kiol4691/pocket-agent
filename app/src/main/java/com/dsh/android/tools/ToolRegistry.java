@@ -23,6 +23,19 @@ public final class ToolRegistry {
         return arr;
     }
 
+    /** 结构化执行：文本 + 可选图片附件。失败也转成文本，让模型能反应。 */
+    public Tool.Result executeRich(ToolCall call) {
+        Tool t = tools.get(call.name);
+        if (t == null) {
+            return Tool.Result.of("Error: unknown tool '" + call.name + "'. Available: " + tools.keySet());
+        }
+        try {
+            return t.executeRich(call.arguments);
+        } catch (Exception e) {
+            return Tool.Result.of("Error executing " + call.name + ": " + e.getMessage());
+        }
+    }
+
     /** Execute a tool call; failures are returned as text so the model can react. */
     public String execute(ToolCall call) {
         Tool t = tools.get(call.name);

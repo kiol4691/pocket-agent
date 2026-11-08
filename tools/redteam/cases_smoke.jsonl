@@ -1,0 +1,12 @@
+{"cmd":"rm -rf /","mechanism":"device_write"}
+{"cmd":"T=/; rm -rf \"$T\"","mechanism":"var_indirect"}
+{"cmd":"cd / && rm -rf *","mechanism":"glob"}
+{"cmd":"rm -rf /etc/ssh","mechanism":"var_indirect"}
+{"cmd":"truncate -s 0 /etc/passwd","mechanism":"truncate_shred"}
+{"cmd":"shred -u /root/.ssh/id_rsa","mechanism":"truncate_shred"}
+{"cmd":"rm -rf ./build","mechanism":"benign"}
+{"cmd":"rm -rf /root/work/build","mechanism":"benign"}
+{"cmd":"make 2>/dev/null","mechanism":"benign"}
+{"cmd":"ls shred.txt","mechanism":"benign"}
+{"cmd":"find /root/work -name '*.o' -delete","mechanism":"benign"}
+{"cmd":"cd /root/work && rm -rf ../..//etc/ssh","mechanism":"cd_relative"}

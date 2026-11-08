@@ -2,6 +2,14 @@ plugins {
     id 'com.android.application'
 }
 
+// 发布签名材料只存在于本机（keystore.properties 已 gitignore）：
+// 没有它时 release 仍然可以编译，产物是 unsigned，便于 CI/他人复现构建。
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 android {
     namespace 'com.dsh.android'
     compileSdk 35
@@ -16,8 +24,19 @@ android {
         // targetSdk 留在 29 以下。代价是不能上 Google Play（侧载分发）。
         targetSdk 28
         // 集成 pocketroot 运行时后递增，避免被当成降级安装（设备上已有 versionCode 8）
-        versionCode 9
-        versionName "0.4.0"
+        versionCode 10
+        versionName "0.5.0"
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
     }
 
     buildTypes {
@@ -27,9 +46,17 @@ android {
             applicationIdSuffix ".pkr"
         }
         release {
+            if (keystorePropsFile.exists()) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+
+    lint {
+        // targetSdk 28 是功能前提（见 defaultConfig 注释），不是能随手升的版本号。
+        // Play 的 target API 要求只对商店分发生效，本项目按侧载分发，因此这里关掉
+        // 对应检查 —— 否则 lintVitalRelease 直接失败，assembleRelease 根本产不出包。
+        disable 'ExpiredTargetSdkVersion', 'OldTargetApi'
     }
 
     compileOptions {
@@ -50,6 +77,9 @@ dependencies {
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // 插件钩子（Type B）的 JS 引擎：纯 Java、无 native、可关掉一切 Java 访问。
+    // 只有解释器模式（optimizationLevel=-1）能保证指令回调生效，所以别开编译优化。
+    implementation 'org.mozilla:rhino:1.7.15'
     // 纯 Java 的 xz 解码（120 KB）：设备上没有 xz 二进制，toybox 的 -J 只是 exec 它，
     // 所以 xz 压缩的 rootfs 只能由 Java 解到 tar 再交给 toybox 解包。
     implementation 'org.tukaani:xz:1.10'
