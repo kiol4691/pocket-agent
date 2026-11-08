@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.5.1 — 2026-11-09
+
+在 v0.5.0 基础上修复 AI 实测反馈的一批环境与渲染问题，并在真机逐条验证。
+
+### 运行时 / shim（pocketroot）
+
+- 静态 ELF（无 PT_INTERP，如 Debian 的 `ldconfig`）改为直接 exec，不再误用未初始化的
+  interp；libc-bin 的 postinst 因此不再卡在 half-configured（`dpkg --audit` 为空）。
+- `readlink` 对 bind 目标（`/root/workspace`、`/images`、`/sdcard`）也反解，
+  不再泄漏 `/data/user/0/...`；内部读满再反解，修掉 20 字节截断与 1 字节歧义。
+- xattr 一族改为翻译路径后调用真实 syscall（`setxattr/getxattr/listxattr` 可用），
+  仅把 ACL/SELinux 探测的 EACCES 映射成 ENOTSUP，避免 `ls -l` 权限串带 `?`。
+- `inotify_add_watch` 补路径翻译，绝对路径不再 ENOENT。
+- 新增 `zng_sem.c`：自己实现 `sem_open/sem_close/sem_unlink`，POSIX 命名信号量可用，
+  `multiprocessing.Pool` / `ProcessPoolExecutor` 恢复（`/dev/shm` 建为可写目录）。
+- `--library-path` 增加 `/usr/local/lib`，跨目录符号链接的程序（venv 的 `bin/python3`）
+  不再因 `$ORIGIN` RUNPATH 找不到 `libpython3.13.so.1.0`。
+- 硬链接：Android SELinux 禁止 app 数据目录建硬链接（无 shim 的 `ln` 同样 EACCES），
+  复制回退保留但不再静默（写 zng.log + 一次 stderr 提示）。
+- 宿主 wrapper `/system/bin/sh` 不再继承 guest 的 `LD_*`，装上 `libc6-dev` 后主 shell
+  也不会 `CANNOT LINK EXECUTABLE`。
+
+### 工具 / 环境
+
+- 文件工具加挂载表：可读工作区外的绝对路径（`/etc/os-release`、`/tmp`、`/images`、
+  `/sdcard`），宿主 app 私有路径反解为 guest 路径且不回显。
+- `apt-get` 自动带 `--force-not-root`（`99-pocketroot`），`dpkg` 装完要求
+  `dpkg --audit` + 实际执行二进制验证；`ldconfig` 包装脚本处理静态二进制路径。
+- libc 常量改写让 `id -un` / `getent passwd` / `ls -l` 显示 `pocket` 而非数字 uid。
+- 主 shell 的 `/etc/shm`、SysV shm（`zng_sysv.c`）等已验证源码一并入库。
+
+### 应用
+
+- 系统提示词按官方 harness 的模块化结构重写（一条规则一段、注入真实模型名、外部内容
+  不可信声明）。
+- 上下文压缩改为 60k token 估算触发，移除加载/窗口的双重截断，迭代中膨胀也会再压。
+
+`make -C tests check` 235 项通过；release 为签名包（versionCode 11）。
+
 ## v0.5.0 — 2026-11-08
 
 首个可直接分发（signed release）的版本。运行时从 proroot 切到自研 **pocketroot**，不再需要闭源
