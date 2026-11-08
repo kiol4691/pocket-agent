@@ -74,6 +74,7 @@ public final class GuestTools {
      */
     public static void installCompat(Context ctx, File root) {
         try {
+            patchNssPaths(root);
             writeIfChanged(new File(root, "etc/apt/apt.conf.d/99-pocketroot"),
                     APT_CONF.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             File lc = new File(root, "usr/local/bin/ldconfig");
@@ -90,6 +91,71 @@ public final class GuestTools {
         } catch (Exception e) {
             DebugLog.w("GuestTools: compat " + e);
         }
+    }
+
+    /**
+     * 让 guest 的用户名/组名解析走 shim 已经装好的 fd（5=passwd，6=group，7=nsswitch）。
+     *
+     * glibc 的 nss_files 用内部隐藏符号 __open64_nocancel 打开 /etc/passwd，LD_PRELOAD
+     * 拦不到 —— 路径不会被翻译，实际读的是宿主 Android 的 /etc/passwd（不存在）。
+     * 表现就是 id -un / getent passwd 全部失败，ls -l 只显示数字 uid。
+     *
+     * 镜像在 pimg 拉取时会做同样的字符串改写（patch-glibc.py），会话 rootfs 之前漏了。
+     * 这里只替换 .rodata 里的常量，长度不变（尾部补 NUL），ELF 结构不受影响。
+     */
+    private static void patchNssPaths(File root) {
+        File libc = new File(root, "usr/lib/aarch64-linux-gnu/libc.so.6");
+        if (!libc.isFile()) libc = new File(root, "lib/aarch64-linux-gnu/libc.so.6");
+        if (!libc.isFile()) return;
+        File marker = new File(root, ".dsh-nss-v1");
+        if (marker.isFile() && marker.lastModified() >= libc.lastModified()) return;
+        try {
+            byte[] b = java.nio.file.Files.readAllBytes(libc.toPath());
+            boolean changed = replacePath(b, "/etc/passwd", "/dev/fd/5")
+                    | replacePath(b, "/etc/group", "/dev/fd/6")
+                    | replacePath(b, "/etc/nsswitch.conf", "/dev/fd/7");
+            if (changed) {
+                File bak = new File(libc.getParentFile(), "libc.so.6.pocketbak");
+                if (!bak.isFile()) java.nio.file.Files.copy(libc.toPath(), bak.toPath());
+                File tmp = new File(libc.getParentFile(), "libc.so.6.new");
+                java.nio.file.Files.write(tmp.toPath(), b);
+                //noinspection ResultOfMethodCallIgnored
+                tmp.setReadable(true, false);
+                //noinspection ResultOfMethodCallIgnored
+                tmp.setExecutable(true, false);
+                java.nio.file.Files.move(tmp.toPath(), libc.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                //noinspection ResultOfMethodCallIgnored
+                libc.setExecutable(true, false);
+                DebugLog.i("GuestTools: patched libc nss paths");
+            }
+            //noinspection ResultOfMethodCallIgnored
+            marker.createNewFile();
+            //noinspection ResultOfMethodCallIgnored
+            marker.setLastModified(System.currentTimeMillis());
+        } catch (Exception e) {
+            DebugLog.w("GuestTools: nss patch " + e);
+        }
+    }
+
+    /** 把 b 里的 from\0 原地换成 to\0（to 更短，剩余补 NUL）。返回是否替换。 */
+    private static boolean replacePath(byte[] b, String from, String to) {
+        byte[] fs = from.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] ts = to.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] f = java.util.Arrays.copyOf(fs, fs.length + 1);   // 末尾补 NUL
+        byte[] t = java.util.Arrays.copyOf(ts, ts.length + 1);
+        if (t.length > f.length) return false;
+        for (int i = 0; i + f.length <= b.length; i++) {
+            boolean hit = true;
+            for (int j = 0; j < f.length; j++) {
+                if (b[i + j] != f[j]) { hit = false; break; }
+            }
+            if (!hit) continue;
+            System.arraycopy(t, 0, b, i, t.length);
+            for (int j = i + t.length; j < i + f.length; j++) b[j] = 0;
+            return true;
+        }
+        return false;
     }
 
     /** 内容不同才写；返回是否真的写了。 */
