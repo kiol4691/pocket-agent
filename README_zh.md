@@ -21,7 +21,7 @@ OpenAI 兼容端点（DeepSeek / OpenRouter / vLLM / one-api 等）。
 | 实现方式 | Java 原生应用 | Termux + Node + 脚本 | Node + 浏览器 |
 | APK / 安装体积 | **APK 约 53 MB**（其中 48 MB 是内置 rootfs，release 构建） | 100–500 MB+ | 桌面端，不适用 |
 | 落盘占用 | ~340 MB（rootfs 解包后 260 MB） | 通常 1–3 GB | 不适用 |
-| 常驻内存 | ~128 MB | 通常 300 MB+ | 不适用 |
+| 常驻内存 | **约 80 MB PSS**（全新安装；长会话后约 195 MB） | 通常 300 MB+ | 不适用 |
 | 需要 root | **否**（LD_PRELOAD，零 ptrace） | 否 | 否 |
 | Android 8+ / arm64 | ✅ | ✅ | ❌ |
 
