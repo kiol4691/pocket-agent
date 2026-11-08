@@ -107,13 +107,18 @@ public final class GuestTools {
         File libc = new File(root, "usr/lib/aarch64-linux-gnu/libc.so.6");
         if (!libc.isFile()) libc = new File(root, "lib/aarch64-linux-gnu/libc.so.6");
         if (!libc.isFile()) return;
-        File marker = new File(root, ".dsh-nss-v1");
+        File marker = new File(root, ".dsh-nss-v3");
         if (marker.isFile() && marker.lastModified() >= libc.lastModified()) return;
         try {
             byte[] b = java.nio.file.Files.readAllBytes(libc.toPath());
             boolean changed = replacePath(b, "/etc/passwd", "/dev/fd/5")
                     | replacePath(b, "/etc/group", "/dev/fd/6")
                     | replacePath(b, "/etc/nsswitch.conf", "/dev/fd/7");
+            // sem_open 走 glibc 内部 open；libc 里是 "/dev/shm/%s" 这类前缀，
+            // 没有 NUL 结尾，只能做等长裸替换
+            int shmHits = 0;
+            while (replaceRaw(b, "/dev/shm/", "/dev/fd/8/")) { changed = true; shmHits++; }
+            DebugLog.i("nss patch: len=" + b.length + " shmHits=" + shmHits + " changed=" + changed);
             if (changed) {
                 File bak = new File(libc.getParentFile(), "libc.so.6.pocketbak");
                 if (!bak.isFile()) java.nio.file.Files.copy(libc.toPath(), bak.toPath());
@@ -136,6 +141,23 @@ public final class GuestTools {
         } catch (Exception e) {
             DebugLog.w("GuestTools: nss patch " + e);
         }
+    }
+
+    /** 等长字节替换（不要求 NUL 结尾），用于 "/dev/shm/%s" 这种前缀常量。 */
+    private static boolean replaceRaw(byte[] b, String from, String to) {
+        byte[] f = from.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] t = to.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (f.length != t.length) return false;
+        for (int i = 0; i + f.length <= b.length; i++) {
+            boolean hit = true;
+            for (int j = 0; j < f.length; j++) {
+                if (b[i + j] != f[j]) { hit = false; break; }
+            }
+            if (!hit) continue;
+            System.arraycopy(t, 0, b, i, t.length);
+            return true;
+        }
+        return false;
     }
 
     /** 把 b 里的 from\0 原地换成 to\0（to 更短，剩余补 NUL）。返回是否替换。 */
