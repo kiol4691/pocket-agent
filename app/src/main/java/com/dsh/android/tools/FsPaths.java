@@ -2,12 +2,43 @@ package com.dsh.android.tools;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
-/** 官方 tool-fs 的 guest 绝对路径（/root/workspace/...）→ app 工作区 Path。 */
+/**
+ * guest 绝对路径 → app 侧真实路径。
+ *
+ * 旧实现把「不是 /root/workspace 开头的绝对路径」直接拼到工作区后面
+ * （/etc/os-release → /root/workspace/etc/os-release），read / glob / grep 因此读不到
+ * 工作区外的任何文件。现在按最小挂载表解析：
+ *
+ *   /root/workspace → app 的 workspace 目录
+ *   /images         → files/oci（pimg 的镜像目录，与会话里的 bind 一致）
+ *   /sdcard         → 共享存储（未授权时自然失败）
+ *   其余绝对路径     → rootfs 下的同名路径（/etc/os-release、/tmp/x.log…）
+ */
 public final class FsPaths {
     public static final String ROOT = "/root/workspace";
+    private static final String IMAGES = "/images";
+    private static final String SDCARD = "/sdcard";
+
+    private static volatile Path rootfsDir;
+    private static volatile Path imagesDir;
 
     private FsPaths() {
+    }
+
+    /** 由启动流程注入；null 表示该挂载不存在。 */
+    public static void mounts(Path rootfs, Path images) {
+        rootfsDir = rootfs == null ? null : rootfs.toAbsolutePath().normalize();
+        imagesDir = images == null ? null : images.toAbsolutePath().normalize();
+    }
+
+    private static Path inside(Path base, String relative, String original) throws IOException {
+        String rel = relative;
+        while (rel.startsWith("/")) rel = rel.substring(1);
+        Path t = rel.isEmpty() ? base : base.resolve(rel).normalize();
+        if (!t.startsWith(base)) throw new IOException("Path escapes its mount: " + original);
+        return t;
     }
 
     public static Path resolve(Path workspace, String guestPath) throws IOException {
@@ -19,18 +50,44 @@ public final class FsPaths {
             throw new IOException("The path " + p + " is not an absolute path, it should start with `/`. "
                     + "Maybe you meant " + ROOT + "/" + p + "?");
         }
-        if (!p.startsWith(ROOT)) p = ROOT + p;   // 其它绝对路径也落在工作区内，避免越界
-        String rel = p.substring(ROOT.length());
-        // Path.resolve 遇到绝对参数会直接返回它自己，前导 / 必须先去掉，否则永远越界
-        while (rel.startsWith("/")) rel = rel.substring(1);
-        Path t = workspace.resolve(rel).normalize();
-        if (!t.startsWith(workspace)) throw new IOException("Path escapes workspace: " + p);
-        return t;
+        p = Paths.get(p).normalize().toString().replace('\\', '/');
+
+        Path ws = workspace.toAbsolutePath().normalize();
+        if (p.equals(ROOT) || p.startsWith(ROOT + "/")) {
+            return inside(ws, p.substring(ROOT.length()), p);
+        }
+        Path img = imagesDir;
+        if (img != null && (p.equals(IMAGES) || p.startsWith(IMAGES + "/"))) {
+            return inside(img, p.substring(IMAGES.length()), p);
+        }
+        if (p.equals(SDCARD) || p.startsWith(SDCARD + "/")) {
+            Path host = android.os.Environment.getExternalStorageDirectory().toPath()
+                    .toAbsolutePath().normalize();
+            return inside(host, p.substring(SDCARD.length()), p);
+        }
+        Path root = rootfsDir;
+        if (root == null) {
+            throw new IOException("No rootfs mounted yet; cannot resolve " + p
+                    + ". Use a path under " + ROOT + " or wait for the runtime to start.");
+        }
+        return inside(root, p, p);
     }
 
     /** 模型看到的规范路径。 */
     public static String display(Path workspace, Path target) {
-        String rel = workspace.relativize(target).toString().replace('\\', '/');
-        return rel.isEmpty() ? ROOT : ROOT + "/" + rel;
+        Path t = target.toAbsolutePath().normalize();
+        Path ws = workspace.toAbsolutePath().normalize();
+        if (t.startsWith(ws)) return join(ROOT, ws.relativize(t).toString());
+        Path img = imagesDir;
+        if (img != null && t.startsWith(img)) return join(IMAGES, img.relativize(t).toString());
+        Path root = rootfsDir;
+        if (root != null && t.startsWith(root)) return join("", root.relativize(t).toString());
+        return t.toString();
+    }
+
+    private static String join(String prefix, String rel) {
+        String r = rel.replace('\\', '/');
+        if (r.isEmpty()) return prefix.isEmpty() ? "/" : prefix;
+        return prefix + "/" + r;
     }
 }

@@ -1463,6 +1463,11 @@ public final class MainActivity extends AppCompatActivity {
     /** 工具表：agent 回合与调试通道共用一份，避免两边注册出分歧。 */
     private ToolRegistry buildTools() {
         java.nio.file.Path ws = runtime.runtime().workspaceDir().toPath();
+        // 文件工具要能读工作区外的绝对路径（/etc/os-release、/tmp/*.log、/images/...）：
+        // 把这些 guest 路径映射到 rootfs / oci 目录，而不是一律塞进 workspace。
+        com.dsh.android.tools.FsPaths.mounts(
+                runtime.runtime().rootfsDir().toPath(),
+                new java.io.File(getFilesDir(), "oci").toPath());
         ToolRegistry tools = new ToolRegistry();
         tools.register(new BashTool(runtime.runtime()));
         tools.register(new com.dsh.android.tools.ContainerTool(this));
