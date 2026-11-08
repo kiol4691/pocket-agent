@@ -23,3 +23,6 @@ keystore.properties
 
 # 本地发布产物（APK/校验和），只上传到 Release，不进仓库
 dist/
+
+# 内部开发日志，仅保留在本地
+AGENTS.md
