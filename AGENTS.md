@@ -1401,3 +1401,27 @@ H1≈21sp、H2≈19.6sp、H3≈18sp、H4–H6 仍是正文 17sp。
 要真正的行内排版需换方案（降级 ext-latex / 用 TeXFormula 自己生成 ImageSpan），工作量较大。
 
 **备注**：同时显式 `.usePlugin(CorePlugin.create())` 放最前，避免依赖 Markwon「没显式加就追加到末尾」的隐式行为。
+
+### v0.5.0 发布（2026-11-08）
+
+**GitHub 历史处理**：本地 `main` 与 `origin/main` 从 `v0.1.0` 就分叉（本地 7 个提交走 pocketroot，远程 12 个提交走插件/broker 到 0.3.0）。
+按用户决定：先把远程那条线打成 **`v0.3.0` tag + 归档 Release**，再用 `--force-with-lease=main:4eb269c` 把 `main` 覆盖为本地 `1b2fc64`。
+旧线源码完整保留在 tag 里，不是丢失。
+
+**签名**：本机新建 `~/.android-keys/pocket-agent-release.jks`（RSA 4096 / 10000 天，alias `pocket-agent`），
+口令只写在 `keystore.properties`（600，已 gitignore）—— **不入库、不写进 AGENTS**。丢失后无法升级同包名，需自行备份。
+`app/build.gradle` 在没有 `keystore.properties` 时仍可 `assembleRelease`，产物为 unsigned。
+
+**构建**：`assembleRelease` 原本被 `lintVitalRelease` 的 `ExpiredTargetSdkVersion` 挡住（targetSdk 28 < Play 要求 33）。
+targetSdk 28 是 W^X 功能前提，不能升，因此在 `android.lint` 里 disable 该项。
+产物 56,023,576 B（53.4 MiB），zipalign 4 与 apksigner 校验通过。
+
+**分发**：`v0.5.0` Release 已发布（APK + sha256），sha256 `9ea71c6a…`；`v0.3.0` 为归档 Release（无附件）。
+`dist/` 已 gitignore。
+
+**上传踩坑**：这台机器到 `uploads.github.com` 的上行 25–120 KB/s 且频繁被 RST（curl 56），
+单个 56 MB asset 多次失败。最终方案：后台循环脚本，每轮先删除同名 `starter` 半成品 asset（否则 422），
+再 `--limit-rate 120k` 重传，失败 45 s 后重试 —— 第 1 轮 458 s 传完（122 KB/s）。
+另：早期把 token 写进 `curl -H` 参数会出现在 `ps` 里，已改为 `-K` 配置文件（用完删除）。
+
+**待办**：真机冒烟未做（装 release 需先卸载旧 `com.dsh.android` 0.3.0，另一把密钥签名）；建议撤销并重发一次 PAT。
