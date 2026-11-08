@@ -406,21 +406,27 @@ public class ProrootRuntime {
         String quoted = q(args);
 
         File pidFile = new File(runDir, "persistent.pid");
+        java.util.Map<String, String> genv = new java.util.LinkedHashMap<>();
+        applyLauncherEnv(genv);
+        // wrapper 用干净的宿主环境：LD_* 以内联赋值只作用于 exec 后的 launcher。
+        // setsid 自己也是宿主二进制，同样会被 LD_* 带崩：让它拉起一个干净的 sh，
+        // 再由内层 sh 把 guest 环境内联赋给真正要跑的 launcher。
+        String inner = envPrefix(genv) + "exec \"$@\"";
         ProcessBuilder pb = new ProcessBuilder("/system/bin/sh", "-c",
-                "printf '%s\\n' \"$$\" > " + shq(pidFile.getAbsolutePath()) + "; exec setsid " + quoted);
+                "printf '%s\\n' \"$$\" > " + shq(pidFile.getAbsolutePath())
+                        + "; exec /system/bin/setsid /system/bin/sh -c " + shq(inner) + " sh " + quoted);
         pb.redirectErrorStream(true);
         File cwd = launchCwd();
         if (cwd != null) pb.directory(cwd);
-        java.util.Map<String, String> env = pb.environment();
-        applyLauncherEnv(env);
-        env.put("HOME", "/root");
-        env.put("LANG", "C.UTF-8");
-        env.put("TERM", "dumb");
-        env.put("NO_COLOR", "1");
-        env.put("PAGER", "cat");
-        env.put("GIT_PAGER", "cat");
-        env.put("DEBIAN_FRONTEND", "noninteractive");
-        addProxyEnv(env);
+        pb.environment().put("PATH", "/system/bin:/system/xbin");
+        genv.put("HOME", "/root");
+        genv.put("LANG", "C.UTF-8");
+        genv.put("TERM", "dumb");
+        genv.put("NO_COLOR", "1");
+        genv.put("PAGER", "cat");
+        genv.put("GIT_PAGER", "cat");
+        genv.put("DEBIAN_FRONTEND", "noninteractive");
+        addProxyEnv(genv);
 
         Process proc;
         try {
@@ -544,21 +550,27 @@ public class ProrootRuntime {
         // The launcher pid is captured in a pidfile by the wrapper shell (Process.pid()
         // needs core library desugaring and is deliberately avoided).
         File pidFile = new File(runDir, "last.pid");
+        java.util.Map<String, String> genv = new java.util.LinkedHashMap<>();
+        applyLauncherEnv(genv);
+        // wrapper 用干净的宿主环境：LD_* 以内联赋值只作用于 exec 后的 launcher。
+        // setsid 自己也是宿主二进制，同样会被 LD_* 带崩：让它拉起一个干净的 sh，
+        // 再由内层 sh 把 guest 环境内联赋给真正要跑的 launcher。
+        String inner = envPrefix(genv) + "exec \"$@\"";
         ProcessBuilder pb = new ProcessBuilder("/system/bin/sh", "-c",
-                "printf '%s\\n' \"$$\" > " + shq(pidFile.getAbsolutePath()) + "; exec setsid " + quoted);
+                "printf '%s\\n' \"$$\" > " + shq(pidFile.getAbsolutePath())
+                        + "; exec /system/bin/setsid /system/bin/sh -c " + shq(inner) + " sh " + quoted);
         pb.redirectErrorStream(true);
         File cwd = launchCwd();
         if (cwd != null) pb.directory(cwd);
-        java.util.Map<String, String> env = pb.environment();
-        applyLauncherEnv(env);
-        env.put("HOME", "/root");
-        env.put("LANG", "C.UTF-8");
-        env.put("TERM", "dumb");
-        env.put("NO_COLOR", "1");
-        env.put("PAGER", "cat");
-        env.put("GIT_PAGER", "cat");
-        env.put("DEBIAN_FRONTEND", "noninteractive");
-        addProxyEnv(env);
+        pb.environment().put("PATH", "/system/bin:/system/xbin");
+        genv.put("HOME", "/root");
+        genv.put("LANG", "C.UTF-8");
+        genv.put("TERM", "dumb");
+        genv.put("NO_COLOR", "1");
+        genv.put("PAGER", "cat");
+        genv.put("GIT_PAGER", "cat");
+        genv.put("DEBIAN_FRONTEND", "noninteractive");
+        addProxyEnv(genv);
 
         Process proc;
         try {
@@ -688,6 +700,22 @@ public class ProrootRuntime {
         for (String a : args) {
             if (sb.length() > 0) sb.append(' ');
             sb.append(shq(a));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 把 guest 环境渲染成 shell 内联赋值，只作用于紧跟的 exec。
+     *
+     * 这些变量（尤其 LD_PRELOAD / LD_LIBRARY_PATH）绝不能放进 ProcessBuilder 的环境：
+     * wrapper 是 /system/bin/sh，Android 的 linker 会拿 guest 的 LD_LIBRARY_PATH 去找
+     * libc.so。rootfs 里只要装过 libc6-dev（/usr/lib/aarch64-linux-gnu/libc.so 是
+     * "/* GNU ld script" 文本），sh 就会 CANNOT LINK EXECUTABLE，主 shell 直接起不来。
+     */
+    private static String envPrefix(java.util.Map<String, String> env) {
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : env.entrySet()) {
+            sb.append(e.getKey()).append('=').append(shq(e.getValue())).append(' ');
         }
         return sb.toString();
     }
