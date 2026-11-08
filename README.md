@@ -21,7 +21,7 @@ no shared code. Works with any OpenAI-compatible endpoint (DeepSeek, OpenRouter,
 | Runtime approach | Java native apps | Termux + Node + scripts | Node + browser |
 | APK / install size | **~53 MB APK** (48 MB is the bundled rootfs) | 100–500 MB+ | n/a (desktop) |
 | On-disk footprint | ~340 MB (rootfs 260 MB extracted) | 1–3 GB typical | n/a |
-| RAM (idle) | ~128 MB | 300 MB+ typical | n/a |
+| RAM (idle) | **~80 MB PSS** (fresh install; ~195 MB after a long session) | 300 MB+ typical | n/a |
 | Root | **No** (LD_PRELOAD, zero ptrace) | No | No |
 | Android 8+ / arm64 | ✅ | ✅ | ❌ |
 
