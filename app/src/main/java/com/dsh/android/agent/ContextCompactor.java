@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 而是模型开始丢前面的约束、反复犯错。上游 harness 的 /compact 是同一件事。
  *
  * 策略（保守优先，宁可不压也别压坏）：
- *  - 只在总量超过 {@link #TRIGGER_CHARS} 时触发；
+ *  - 只在估算 token 超过 {@link #TRIGGER_TOKENS} 时触发；
  *  - 永远保留 system 提示与最近 {@link #KEEP_RECENT} 条消息（模型需要眼前这一步的上下文）；
  *  - 中段交给模型自己总结，要求保留：任务目标、已确认的事实/路径/命令、未完成的待办、
  *    用户明确提出的约束；
@@ -23,10 +23,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class ContextCompactor {
 
-    /** 触发阈值（字符）。DeepSeek 128k 上下文按中文约 1.5 字符/token 折算，这里约 40k token。 */
-    public static final int TRIGGER_CHARS = 80_000;
+    /**
+     * 触发阈值（估算 token）。128k 窗口下留足余量：到 60k 就开始压缩。
+     * 旧实现按字符算（80k 字符 ≈ 40k token 中文 / 20k token 代码），
+     * 既与用户预期不符，也会在混合内容上严重低估。
+     */
+    public static final int TRIGGER_TOKENS = 60_000;
     /** 迭代过程中的硬上限：超过它只做本地裁剪，不再调模型生成摘要。 */
-    public static final int HARD_LIMIT = 130_000;
+    public static final int HARD_TOKENS = 100_000;
     /** 保留最近多少条消息不动。 */
     private static final int KEEP_RECENT = 8;
     /**
@@ -50,7 +54,36 @@ public final class ContextCompactor {
 
     /** 当前内容是否大到需要压缩。 */
     public static boolean needed(List<ChatMessage> msgs) {
-        return chars(msgs) > TRIGGER_CHARS;
+        return estimateTokens(msgs) > TRIGGER_TOKENS;
+    }
+
+    /**
+     * 粗略 token 估算：CJK 按 1 token/字，其余按 4 字符/token。
+     *
+     * 只用于「该不该压缩」这一个判断，不需要精确。之所以不依赖 API 的 usage：
+     * OpenAI 兼容端点（vLLM / one-api 等）不一定返回，且压缩要在**发请求之前**决策。
+     */
+    public static int estimateTokens(List<ChatMessage> msgs) {
+        long[] acc = new long[2];              // [0]=CJK 字符数, [1]=其余字符数
+        for (ChatMessage m : msgs) {
+            accumulate(m.content, acc);
+            if (m.toolCalls != null) {
+                for (ToolCall c : m.toolCalls) {
+                    accumulate(c.name, acc);
+                    accumulate(c.arguments, acc);
+                }
+            }
+        }
+        long t = acc[0] + acc[1] / 4;
+        return (int) Math.min(Integer.MAX_VALUE, t);
+    }
+
+    private static void accumulate(String s, long[] acc) {
+        if (s == null) return;
+        for (int i = 0; i < s.length(); i++) {
+            // 0x2E80 起是 CJK 部首/汉字/假名/全角符号，按 1 字 ≈ 1 token 估
+            if (s.charAt(i) >= 0x2E80) acc[0]++; else acc[1]++;
+        }
     }
 
     /** 估算字符数：content + 工具调用参数。 */

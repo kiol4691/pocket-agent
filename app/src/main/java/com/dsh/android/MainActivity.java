@@ -551,7 +551,8 @@ public final class MainActivity extends AppCompatActivity {
             if (activeSession != null && activeSession.isFile()) {
                 // 模型只看最近 40 条（HistoryWindow.sanitize），没必要把整份
                 // 会话日志都反序列化；给 3 倍余量保证 tool_calls/tool 成对。
-                history = JsonlSessionLog.loadTail(activeSession, 120);
+                // 400 条而不是 120：上下文预算应由 token 估算决定，不在加载阶段就砍掉历史
+                history = JsonlSessionLog.loadTail(activeSession, 400);
                 log = new JsonlSessionLog(activeSession, true);
             } else {
                 log = new JsonlSessionLog(sessionsDir);

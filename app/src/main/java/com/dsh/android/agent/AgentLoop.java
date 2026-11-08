@@ -18,7 +18,12 @@ public final class AgentLoop {
 
     private static final String TAG = "DSH";
     private static final int MAX_ITERATIONS = 30;
-    private static final int MAX_HISTORY_MESSAGES = 40;
+    /**
+     * 窗口只是协议/内存的安全阀，不是「上下文预算」。
+     * 旧值 40 会在压缩看到历史之前就把上下文砍掉（实测 373 条的会话只剩 1.5 万字），
+     * 于是压缩永远不触发、较早内容被静默丢弃 —— 真正的预算判断交给 ContextCompactor。
+     */
+    private static final int MAX_HISTORY_MESSAGES = 400;
 
     public interface Listener {
         /** Fired once when an agent turn begins (before the first model call). */
@@ -130,17 +135,22 @@ public final class AgentLoop {
         if (ContextCompactor.needed(messages)) compact(messages, listener);
 
         boolean retriedOverflow = false;
+        int compactions = 0;               // 单回合内最多再压两次，避免摘要调用拖慢每一步
         for (int iter = 1; iter <= MAX_ITERATIONS; iter++) {
             if (cancel.get()) {
                 listener.onFinished("(cancelled)");
                 return;
             }
 
-            if (ContextCompactor.chars(messages) > ContextCompactor.HARD_LIMIT) {
+            if (ContextCompactor.estimateTokens(messages) > ContextCompactor.HARD_TOKENS) {
                 List<ChatMessage> cut = ContextCompactor.truncate(messages);
                 messages.clear();
                 messages.addAll(cut);
                 listener.onNotice("上下文增长过快，已裁剪较早内容");
+            } else if (iter > 1 && compactions < 2 && ContextCompactor.needed(messages)) {
+                // 工具输出在迭代中膨胀到阈值：再压一次，而不是等到硬上限静默裁剪
+                compactions++;
+                compact(messages, listener);
             }
 
             DeepSeekClient.AssistantResult res;
