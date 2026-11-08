@@ -65,6 +65,13 @@ public final class FsPaths {
                     .toAbsolutePath().normalize();
             return inside(host, p.substring(SDCARD.length()), p);
         }
+        // 宿主路径别名：模型有时会从 bash 输出里学到 /storage/emulated/0，也认它
+        String hostSd = android.os.Environment.getExternalStorageDirectory().getAbsolutePath();
+        if (p.equals(hostSd) || p.startsWith(hostSd + "/")) {
+            Path host = android.os.Environment.getExternalStorageDirectory().toPath()
+                    .toAbsolutePath().normalize();
+            return inside(host, p.substring(hostSd.length()), p);
+        }
         Path root = rootfsDir;
         if (root == null) {
             throw new IOException("No rootfs mounted yet; cannot resolve " + p
@@ -80,6 +87,9 @@ public final class FsPaths {
         if (t.startsWith(ws)) return join(ROOT, ws.relativize(t).toString());
         Path img = imagesDir;
         if (img != null && t.startsWith(img)) return join(IMAGES, img.relativize(t).toString());
+        Path sd = android.os.Environment.getExternalStorageDirectory().toPath()
+                .toAbsolutePath().normalize();
+        if (t.startsWith(sd)) return join(SDCARD, sd.relativize(t).toString());
         Path root = rootfsDir;
         if (root != null && t.startsWith(root)) return join("", root.relativize(t).toString());
         return t.toString();
