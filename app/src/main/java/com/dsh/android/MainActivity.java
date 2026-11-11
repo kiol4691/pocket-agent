@@ -1470,7 +1470,7 @@ public final class MainActivity extends AppCompatActivity {
                 new java.io.File(getFilesDir(), "oci").toPath(),
                 getFilesDir().toPath());
         ToolRegistry tools = new ToolRegistry();
-        tools.register(new BashTool(runtime.runtime()));
+        tools.register(new BashTool(runtime.runtime(), this));
         tools.register(new com.dsh.android.tools.ContainerTool(this));
         tools.register(new StrReplaceEditorTool(ws));
         // 官方 dsh-tool-fs 的 read / write / edit / read_image 套件（schema 与输出逐字对齐上游）
@@ -1529,6 +1529,19 @@ public final class MainActivity extends AppCompatActivity {
                     List<String> rs = new ArrayList<>();
                     if (!path.isEmpty()) rs.add(path);
                     out = ChatMessage.userWithRefs(text, rs).toJson().toString();
+                } else if (cmd.startsWith("compact:")) {
+                    // 调试：用真实模型跑一次摘要请求，验证「压缩摘要」这条链路
+                    // （不压缩真实上下文，只花一次几百 token 的调用）。
+                    //    am start ... --es pocketroot_cmd 'compact:'
+                    out = runCompactionForDebug(cmd.substring(8).trim());
+                } else if (cmd.startsWith("prep:")) {
+                    // 调试：预处理 纯 Java 循环 vs JNI native（不调用模型、不联网）。
+                    //    am start ... --es pocketroot_cmd 'prep:'
+                    out = PrepBench.run();
+                } else if (cmd.startsWith("yuv:")) {
+                    // 调试：Camera2 + ImageReader(YUV_420_888) 真实帧，测 YUV planes 直取成本。
+                    //    adb shell pm grant com.dsh.android.pkr android.permission.CAMERA
+                    out = YuvBench.run(getApplicationContext());
                 } else if (cmd.startsWith("hook:")) {
                     out = runHookForDebug(cmd.substring(5).trim());
                 } else if (cmd.startsWith("tool:")) {
@@ -1675,45 +1688,86 @@ public final class MainActivity extends AppCompatActivity {
      * 跑在**有 seccomp 的进程**里 —— adb shell / run-as 都是 Seccomp=0，测不出来。
      */
     private String runProrootForDebug(String rootPath, String shcmd) {
-        File launcher = new File(getApplicationInfo().nativeLibraryDir, "libproroot.so");
-        if (!launcher.isFile()) return "proroot launcher missing";
-        List<String> args = new ArrayList<>();
-        args.add(launcher.getAbsolutePath());
-        args.add("-r");
-        args.add(rootPath);
-        args.add("-0");
-        args.add("--link2symlink");
-        for (String bind : new String[]{"/proc:/proc", "/dev:/dev", "/sys:/sys"}) {
-            args.add("-b");
-            args.add(bind);
-        }
-        args.add("-w");
-        args.add("/");
-        args.add("/bin/sh");
-        args.add("-c");
-        args.add(shcmd);
+        // 与 BashTool 的 Go 兜底共用同一份启动逻辑（含宿主绝对路径的 Go env）。
+        return com.dsh.android.runtime.ProrootFallback.run(this, new File(rootPath),
+                new File(getFilesDir(), "run"), shcmd, 300_000L);
+    }
+
+    /** 调试通道：跑一次真实的摘要请求（ContextCompactor.summarize）。 */
+    private String runCompactionForDebug(String sample) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(args);
-            pb.redirectErrorStream(true);
-            pb.environment().put("PROROOT_TMP_DIR", new File(getFilesDir(), "run").getAbsolutePath());
-            pb.environment().put("HOME", "/root");
-            pb.environment().put("LANG", "C.UTF-8");
-            Process p = pb.start();
-            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-            byte[] chunk = new byte[8192];
-            int n;
-            java.io.InputStream is = p.getInputStream();
-            while ((n = is.read(chunk)) != -1) {
-                buf.write(chunk, 0, n);
-                if (buf.size() > 200_000) break;
+            android.content.SharedPreferences s = getSharedPreferences("settings", MODE_PRIVATE);
+            String model = s.getString("model", "deepseek-chat");
+            String baseUrl = s.getString("base_url", "https://api.deepseek.com");
+            com.dsh.android.llm.DeepSeekClient client =
+                    new com.dsh.android.llm.DeepSeekClient(baseUrl, secrets.get("api_key"), model);
+            if (sample.startsWith("big") || sample.startsWith("edge")) {
+                return runCompactionShapeDebug(sample, client);
             }
-            int rc = p.waitFor();
-            String s = buf.toString("UTF-8");
-            return (s.isEmpty() ? "(no output)" : s) + "\n[exit " + rc + "]";
+            String feed = sample.isEmpty() ? COMPACT_SAMPLE : sample;
+            long t0 = System.currentTimeMillis();
+            String summary = com.dsh.android.agent.ContextCompactor.summarize(
+                    client, feed, new java.util.concurrent.atomic.AtomicBoolean(false));
+            long ms = System.currentTimeMillis() - t0;
+            return "model=" + model + "  " + ms + "ms  feed=" + feed.length()
+                    + " chars  summary=" + summary.length() + " chars\n---\n" + summary;
         } catch (Exception e) {
             return "Error: " + e;
         }
     }
+
+    /**
+     * 造一段足够大的假上下文，验证 compact() 的两条关键路径（真机没有 6 万 token 的真实历史）：
+     *   big  —— 历史很长：必须产出**非空摘要**，且压缩后消息数/字符数变小；
+     *   edge —— 只有几条但单条巨大：keepFrom<=1，compact() 必须原样返回（旧实现会
+     *           返回同一个列表，AgentLoop 再 clear() 就把上下文清空了）。
+     */
+    private String runCompactionShapeDebug(String kind, com.dsh.android.llm.DeepSeekClient client) {
+        List<ChatMessage> msgs = new ArrayList<>();
+        msgs.add(ChatMessage.system("（测试用 system 提示）"));
+        StringBuilder filler = new StringBuilder();
+        for (int i = 0; i < 240; i++) filler.append("测试内容");
+        if (kind.startsWith("edge")) {
+            msgs.add(ChatMessage.user("第一步 " + filler));
+            msgs.add(ChatMessage.assistant("收到 " + filler, null));
+            msgs.add(ChatMessage.user("最后一步"));
+        } else {
+            for (int i = 0; i < 30; i++) {
+                msgs.add(ChatMessage.user("第 " + i + " 步 " + filler));
+                msgs.add(ChatMessage.assistant("第 " + i + " 步完成 " + filler, null));
+            }
+            msgs.add(ChatMessage.user("最后一步"));
+        }
+        int before = com.dsh.android.agent.ContextCompactor.chars(msgs);
+        int tok = com.dsh.android.agent.ContextCompactor.estimateTokens(msgs);
+        try {
+            List<ChatMessage> out = com.dsh.android.agent.ContextCompactor.compact(
+                    msgs, client, new java.util.concurrent.atomic.AtomicBoolean(false));
+            boolean same = out == msgs;
+            String summary = "";
+            if (!same && out.size() > 1) {
+                String c = out.get(1).content == null ? "" : out.get(1).content;
+                int nl = c.indexOf('\n');
+                summary = nl >= 0 ? c.substring(nl + 1).trim() : c.trim();
+            }
+            return kind + ": before=" + before + " chars / " + tok + " tok / " + msgs.size() + " msgs"
+                    + "\nsameObject=" + same + "  after="
+                    + (same ? before : com.dsh.android.agent.ContextCompactor.chars(out))
+                    + " chars / " + (same ? msgs.size() : out.size()) + " msgs"
+                    + "\nsummaryLen=" + summary.length() + "\n---\n"
+                    + (summary.isEmpty() ? "(无摘要)" : summary);
+        } catch (Exception e) {
+            return kind + ": before=" + before + " tok=" + tok + "\nError: " + e;
+        }
+    }
+
+    private static final String COMPACT_SAMPLE =
+            "[user] 在 guest 里装 postgresql-17 并建一张表\n"
+                    + "[assistant] 我先用 apt-get install postgresql 安装。\n"
+                    + "[tool] Setting up postgresql-17 ... initdb 完成，pg_ctl start 后 5432 已监听。\n"
+                    + "[user] 顺便验证中文和事务回滚\n"
+                    + "[tool] CREATE TABLE 成功；INSERT 10000 行；ROLLBACK 验证通过。\n"
+                    + "[user] 待办：还要跑一遍 MariaDB 的对照测试。";
 
     /** 调试通道里跑单个工具：{@code "tool:<name> <json>"}。 */
     private String runToolForDebug(String spec) {

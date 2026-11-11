@@ -1,5 +1,8 @@
 package com.dsh.android.tools;
 
+import android.content.Context;
+
+import com.dsh.android.runtime.ProrootFallback;
 import com.dsh.android.runtime.ProrootRuntime;
 
 import org.json.JSONArray;
@@ -12,9 +15,11 @@ public final class BashTool implements Tool {
     private static final long DEFAULT_TIMEOUT_MS = 300_000L;
 
     private final ProrootRuntime runtime;
+    private final Context context;
 
-    public BashTool(ProrootRuntime runtime) {
+    public BashTool(ProrootRuntime runtime, Context context) {
         this.runtime = runtime;
+        this.context = context.getApplicationContext();
     }
 
     @Override
@@ -53,7 +58,10 @@ public final class BashTool implements Tool {
                         + "* Loopback ports are shared with Android: the site is openable in the phone browser at "
                         + "http://127.0.0.1:<port> while the app is running.\n"
                         + "* Phone storage: 'df -h /' shows the phone's /data partition; when All-Files-Access is granted, "
-                        + "the phone's shared storage is mounted at /sdcard.",
+                        + "the phone's shared storage is mounted at /sdcard.\n"
+                        + "* Go (go build / go test / go vet etc.) runs through a slower proroot fallback; "
+                        + "it works but does not share the persistent shell's cwd, so 'cd ... && go build' "
+                        + "should be one command.",
                 params);
     }
 
@@ -64,6 +72,13 @@ public final class BashTool implements Tool {
         if (command.trim().isEmpty()) return "Error: empty command";
         long timeout = o.optLong("timeout_ms", DEFAULT_TIMEOUT_MS);
         timeout = Math.max(5_000L, Math.min(timeout, 30 * 60_000L));
+        // Go 工具链是静态二进制，pocketroot 的 LD_PRELOAD shim 够不着它
+        // （faccessat2 撞 seccomp、路径不翻译）。编译类命令自动切到 proroot 兜底。
+        if (ProrootFallback.needsFallback(command)) {
+            // 标记走的是哪条后端，便于排查（proroot 慢 3–7×，不该被静默触发）。
+            return "[proroot-fallback]\n" + ProrootFallback.run(context,
+                    runtime.rootfsDir(), runtime.runDir(), command, timeout);
+        }
         return runtime.runBashPersistent(command, timeout);
     }
 }

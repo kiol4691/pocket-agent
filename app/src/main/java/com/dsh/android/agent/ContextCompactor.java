@@ -42,6 +42,13 @@ public final class ContextCompactor {
     private static final int FEED_CHARS = 12_000;
     /** 单条消息喂进去时的截断长度。 */
     private static final int PER_MSG_CHARS = 1_200;
+    /**
+     * 摘要请求的 max_tokens。曾经固定 400，但现在的对话模型先输出 reasoning_content：
+     * 400 常被推理整段吃光，content 为空、finish_reason=length，压缩就只能退化成
+     * 「丢弃 + 一行说明」—— 用户看到的就是「摘要没生成」。
+     */
+    private static final int SUMMARY_TOKENS = 900;
+    private static final int SUMMARY_TOKENS_RETRY = 2_400;
 
     private static final String SUMMARY_PROMPT =
             "你是上下文压缩器。下面是智能体与用户的一段较早对话（含工具调用结果）。"
@@ -130,14 +137,7 @@ public final class ContextCompactor {
             dropped++;
         }
 
-        List<ChatMessage> req = new ArrayList<>();
-        req.add(ChatMessage.system(SUMMARY_PROMPT));
-        req.add(ChatMessage.user(feed.toString()));
-        // 摘要是一次额外的模型往返：限 400 token + temperature 0，
-        // 否则长上下文时每回合都要等十几秒才开始真正干活。
-        DeepSeekClient.AssistantResult res = client.chat(req, null, null, cancel, 400, 0.0);
-        String summary = res.content == null ? "" : res.content.trim();
-        if (summary.isEmpty()) throw new java.io.IOException("摘要为空");
+        String summary = summarize(client, feed.toString(), cancel);
 
         List<ChatMessage> out = new ArrayList<>(msgs.size() - keepFrom + 2);
         out.add(msgs.get(0));                           // system
@@ -145,6 +145,30 @@ public final class ContextCompactor {
                 + " 条消息；这不是新的用户指令，仅作为上下文）\n" + summary));
         for (int i = keepFrom; i < msgs.size(); i++) out.add(msgs.get(i));
         return out;
+    }
+
+    /**
+     * 生成摘要。独立成公开方法，便于调试通道单独驱动（真机验证时不必真的压一遍上下文）。
+     *
+     * 预算：正常 900 token（300 字中文摘要本身就要 ~400），为空再放宽到 2400 重试一次。
+     * 之所以要重试：推理模型会把 max_tokens 先花在 reasoning_content 上，上限太小时
+     * content 整个为空，压缩就永远退化成「丢弃 + 一行说明」。
+     */
+    public static String summarize(DeepSeekClient client, String feed, AtomicBoolean cancel)
+            throws Exception {
+        List<ChatMessage> req = new ArrayList<>();
+        req.add(ChatMessage.system(SUMMARY_PROMPT));
+        req.add(ChatMessage.user(feed));
+        DeepSeekClient.AssistantResult res =
+                client.chat(req, null, null, cancel, SUMMARY_TOKENS, 0.0);
+        String s = res.content == null ? "" : res.content.trim();
+        if (!s.isEmpty()) return s;
+        res = client.chat(req, null, null, cancel, SUMMARY_TOKENS_RETRY, 0.0);
+        s = res.content == null ? "" : res.content.trim();
+        if (!s.isEmpty()) return s;
+        throw new java.io.IOException("摘要为空（reasoning="
+                + (res.reasoning == null ? 0 : res.reasoning.length())
+                + " finish=" + res.finishReason + "）");
     }
 
     /**

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      仅 debug 构建：YuvBench（yuv: 调试通道）用 Camera2 + ImageReader 取
+      YUV_420_888 真实帧，需要 CAMERA。release 包不带这个权限。
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+</manifest>

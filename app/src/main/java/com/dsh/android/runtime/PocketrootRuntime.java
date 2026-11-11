@@ -85,6 +85,12 @@ public final class PocketrootRuntime extends ProrootRuntime {
         env.put("LD_LIBRARY_PATH", libPath());
         // Android app 进程的 seccomp 拦 rseq(293)：不关掉，glibc 启动即 SIGSYS。
         env.put("GLIBC_TUNABLES", "glibc.pthread.rseq=0");
+        // glibc 的 setlocale 在 libc **内部** open /usr/lib/locale/<locale>/LC_CTYPE，
+        // 不走 PLT，路径不翻译就落到宿主 Android 的 /usr/lib/locale（不存在），
+        // 于是 LANG=C.UTF-8 仍报 "Cannot set LC_CTYPE ... No such file or directory"
+        // （tmux 直接拒绝启动）。locale 路径是动态拼接的，等长替换搞不定；
+        // LOCPATH 接受宿主绝对路径，是让内部 open 命中 rootfs 的唯一办法。
+        env.put("LOCPATH", rootfsDir.getAbsolutePath() + "/usr/lib/locale");
         env.put("ZNG_LOG", new File(tmpDir, "zng.log").getAbsolutePath());
         // PATH 必须显式给：默认会继承 Android 的 PATH（/system/bin），guest 里那些路径不存在。
         // python3 在 /usr/local/bin（Debian 的 python 镜像装在 /usr/local）。

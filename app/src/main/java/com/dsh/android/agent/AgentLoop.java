@@ -266,11 +266,20 @@ public final class AgentLoop {
         int before = ContextCompactor.chars(messages);
         try {
             List<ChatMessage> out = ContextCompactor.compact(messages, client, cancel);
+            // compact() 在「保留窗口已经覆盖全部消息」时返回**同一个列表对象**。
+            // 那种情况下 clear()+addAll() 会先把 messages 清空、再从一个已空的
+            // 同对象里复制，整个上下文（含 system）就没了 —— 真机表现为压缩后
+            // 请求直接报错、也没有摘要。没有可压缩区间时原样返回即可。
+            if (out == messages) return;
+            String summary = summaryText(out);
             messages.clear();
             messages.addAll(out);
             int after = ContextCompactor.chars(messages);
-            Log.i(TAG, "context compacted " + before + " -> " + after);
-            listener.onNotice("上下文已压缩：" + before + " → " + after + " 字符");
+            Log.i(TAG, "context compacted " + before + " -> " + after + "\n" + summary);
+            // 摘要只存在内存里，界面上若不显示就等于"没有摘要"——把正文一并带出来
+            // （太长时截断，避免占满一屏）。
+            listener.onNotice("上下文已压缩：" + before + " → " + after + " 字符（摘要 "
+                    + summary.length() + " 字）\n" + preview(summary));
         } catch (Exception e) {
             Log.w(TAG, "compact failed, falling back to truncation", e);
             List<ChatMessage> out = ContextCompactor.truncate(messages);
@@ -278,6 +287,21 @@ public final class AgentLoop {
             messages.addAll(out);
             listener.onNotice("上下文过长，较早的内容已丢弃（摘要失败：" + e.getMessage() + "）");
         }
+    }
+
+    /** 压缩结果里 system 之后的第二条就是摘要消息（见 ContextCompactor.compact）。 */
+    private static String summaryText(List<ChatMessage> msgs) {
+        if (msgs.size() > 1 && "user".equals(msgs.get(1).role) && msgs.get(1).content != null) {
+            String c = msgs.get(1).content;
+            int nl = c.indexOf('\n');
+            // 首行是"（自动生成的历史摘要…）"的前缀说明，摘要正文从第二行开始
+            return nl >= 0 ? c.substring(nl + 1).trim() : c.trim();
+        }
+        return "";
+    }
+
+    private static String preview(String s) {
+        return s.length() <= 200 ? s : s.substring(0, 200) + "…";
     }
 
     /**

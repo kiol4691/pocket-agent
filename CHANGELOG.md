@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.5.2 — 2026-11-11
+
+### 运行时 / shim（pocketroot）
+
+- **Node / libuv 的文件系统路径翻译修好了**。libuv 会绕过 PLT 直接发 `openat`
+  （真机实测 `nr=56 fl=542720 path=/tmp`，不带 `O_DIRECTORY`），LD_PRELOAD 的 libc 钩子
+  拦不到，guest 里 `fs.readdirSync('/tmp')` / `fs.statSync('/tmp')` 一直 ENOENT。两层修复：
+  - seccomp user notification 兜底：只对 `openat` 且 `dirfd == AT_FDCWD` 的通知；
+    supervisor 读目标路径 → `zng_translate` → 自己 `openat` → `NOTIF_ADDFD` 注入 fd；
+    任何失败回 `SECCOMP_USER_NOTIF_FLAG_CONTINUE`（退回现状，绝不挂起）。
+  - libuv 同步 fs 入口翻译（新增 `zng_uv.c`）：在 JS → libuv 边界翻译 14 个带路径的
+    `uv_fs_*`（open/stat/lstat/access/scandir/opendir/realpath/mkdir/unlink/rmdir/
+    readlink/chmod/truncate/rename）；只处理同步调用，异步由 seccomp 兜底。
+  - dirfd 快路径：shim 自身 open 改走 `openat(rootfd, 相对路径)`，BPF 对
+    `dirfd != AT_FDCWD` 直接放行。`readFileSync` ×300：131 ms → 20 ms（基线 18 ms）。
+  - 真机验证：`readdirSync('/tmp')` = 259 项、`statSync('/tmp')` = true、
+    异步 `fs.readdir` = 259 项；`ls` / `readFile` 无回退。
+- **statx 路径泄漏**：statx(291) 在本机 Android 上是放行的，libuv 用 `syscall(SYS_statx)`
+  直接发；shim 的 `syscall()` 钩子原来只在被 seccomp 拦时才翻译，放行分支直接打宿主。
+  表现为异步 `fs.stat('/system')` 成功、`/etc/os-release` 反而 ENOENT（同步正常）。
+  现在 291/439/452 无论是否被拦都走翻译实现；guest 里 `npm install lodash` 实测通过。
+- `ldconfig`：Debian 的 `/usr/sbin/ldconfig` 是 static-pie（无 PT_INTERP、不加载 shim），
+  在 zygote seccomp 下必被 SIGSYS 杀掉，导致 `libc-bin` 每次 `apt` 都停在 half-configured。
+  改为三个 PATH 命中点全部替换为 no-op 脚本，不再执行这个静态二进制。
+
+### Agent / 工具
+
+- 修复上下文压缩在「保留窗口已覆盖全部消息」时把 messages 清空（表现为压缩后请求报错、
+  也没有摘要）：该分支现在原样返回。
+- 摘要请求 max_tokens 400 → 900（失败重试 2400）：旧值常被 reasoning_content 吃光，
+  `content` 为空、`finish_reason=length`，摘要退化成「丢弃 + 一行说明」。
+- `BashTool` 明确提示 guest 的 `/sdcard` 对应手机共享存储；新增 `ProrootFallback`。
+
+### 调试
+
+- 新增 `prep:`（纯 Java vs JNI 预处理基准）与 `yuv:`（Camera2 取真实 YUV_420_888 帧）
+  两个调试通道。`CAMERA` 权限只在 debug 构建声明，release 包不带。
+
 ## v0.5.1 — 2026-11-09
 
 在 v0.5.0 基础上修复 AI 实测反馈的一批环境与渲染问题，并在真机逐条验证。

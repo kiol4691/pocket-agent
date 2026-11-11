@@ -113,6 +113,10 @@ public class ProrootRuntime {
         return workspaceDir;
     }
 
+    public File runDir() {
+        return runDir;
+    }
+
     /**
      * True when the user granted All-Files-Access (MANAGE_EXTERNAL_STORAGE). Only then can the
      * app process stat/read /storage/emulated/0 (Huawei's scoped storage denies even statfs
@@ -408,6 +412,19 @@ public class ProrootRuntime {
         File pidFile = new File(runDir, "persistent.pid");
         java.util.Map<String, String> genv = new java.util.LinkedHashMap<>();
         applyLauncherEnv(genv);
+        genv.put("HOME", "/root");
+        genv.put("LANG", "C.UTF-8");
+        genv.put("TERM", "dumb");
+        genv.put("NO_COLOR", "1");
+        genv.put("PAGER", "cat");
+        genv.put("GIT_PAGER", "cat");
+        genv.put("DEBIAN_FRONTEND", "noninteractive");
+        // envPrefix(genv) 是 genv 的**快照**：原先在生成 inner 之后才 put
+        // HOME/LANG/... 和 addProxyEnv，那些变量根本进不了启动的 shell —— 真机
+        // 报告里 curl/git 拿不到 http_proxy 就是这个顺序 bug（proroot 与
+        // pocketroot 两个运行时共有的 exec 路径都中招）。所有写入必须在
+        // 生成 inner 之前完成。
+        addProxyEnv(genv);
         // wrapper 用干净的宿主环境：LD_* 以内联赋值只作用于 exec 后的 launcher。
         // setsid 自己也是宿主二进制，同样会被 LD_* 带崩：让它拉起一个干净的 sh，
         // 再由内层 sh 把 guest 环境内联赋给真正要跑的 launcher。
@@ -419,14 +436,6 @@ public class ProrootRuntime {
         File cwd = launchCwd();
         if (cwd != null) pb.directory(cwd);
         pb.environment().put("PATH", "/system/bin:/system/xbin");
-        genv.put("HOME", "/root");
-        genv.put("LANG", "C.UTF-8");
-        genv.put("TERM", "dumb");
-        genv.put("NO_COLOR", "1");
-        genv.put("PAGER", "cat");
-        genv.put("GIT_PAGER", "cat");
-        genv.put("DEBIAN_FRONTEND", "noninteractive");
-        addProxyEnv(genv);
 
         Process proc;
         try {
@@ -552,6 +561,19 @@ public class ProrootRuntime {
         File pidFile = new File(runDir, "last.pid");
         java.util.Map<String, String> genv = new java.util.LinkedHashMap<>();
         applyLauncherEnv(genv);
+        genv.put("HOME", "/root");
+        genv.put("LANG", "C.UTF-8");
+        genv.put("TERM", "dumb");
+        genv.put("NO_COLOR", "1");
+        genv.put("PAGER", "cat");
+        genv.put("GIT_PAGER", "cat");
+        genv.put("DEBIAN_FRONTEND", "noninteractive");
+        // envPrefix(genv) 是 genv 的**快照**：原先在生成 inner 之后才 put
+        // HOME/LANG/... 和 addProxyEnv，那些变量根本进不了启动的 shell —— 真机
+        // 报告里 curl/git 拿不到 http_proxy 就是这个顺序 bug（proroot 与
+        // pocketroot 两个运行时共有的 exec 路径都中招）。所有写入必须在
+        // 生成 inner 之前完成。
+        addProxyEnv(genv);
         // wrapper 用干净的宿主环境：LD_* 以内联赋值只作用于 exec 后的 launcher。
         // setsid 自己也是宿主二进制，同样会被 LD_* 带崩：让它拉起一个干净的 sh，
         // 再由内层 sh 把 guest 环境内联赋给真正要跑的 launcher。
@@ -563,14 +585,6 @@ public class ProrootRuntime {
         File cwd = launchCwd();
         if (cwd != null) pb.directory(cwd);
         pb.environment().put("PATH", "/system/bin:/system/xbin");
-        genv.put("HOME", "/root");
-        genv.put("LANG", "C.UTF-8");
-        genv.put("TERM", "dumb");
-        genv.put("NO_COLOR", "1");
-        genv.put("PAGER", "cat");
-        genv.put("GIT_PAGER", "cat");
-        genv.put("DEBIAN_FRONTEND", "noninteractive");
-        addProxyEnv(genv);
 
         Process proc;
         try {

@@ -24,8 +24,8 @@ android {
         // targetSdk 留在 29 以下。代价是不能上 Google Play（侧载分发）。
         targetSdk 28
         // 集成 pocketroot 运行时后递增，避免被当成降级安装（设备上已有 versionCode 8）
-        versionCode 11
-        versionName "0.5.1"
+        versionCode 12
+        versionName "0.5.2"
     }
 
     signingConfigs {
