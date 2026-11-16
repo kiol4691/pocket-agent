@@ -1,0 +1,13 @@
+{
+  "id": "guard_rm",
+  "name": "Guard RM",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "拦截对根目录 / 家目录的递归删除，以及 mkfs / dd 写块设备。",
+  "entry": "main.js",
+  "permissions": ["hook.tool"],
+  "priority": 10,
+  "onError": "deny",
+  "limits": { "budgetMs": 200, "budgetSteps": 100000 },
+  "contributes": { "hooks": ["beforeToolCall"] }
+}

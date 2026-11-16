@@ -39,3 +39,9 @@ below or linked at the given URLs. Full license texts are available at each link
 - **Use:** Bundled in this repository as a gzip-compressed tarball
   (`app/src/main/assets/ubuntu-base-arm64.bin`, extracted by the app at first run).
   Tsinghua / USTC / cdimage mirrors are referenced in code as fallback download sources.
+## QuickJS (plugin runtime, `qjsfork/`)
+- **Project:** https://bellard.org/quickjs/ (bundled source in `qjsfork/src/main/cpp/quickjs`)
+- **License:** MIT
+- **Use:** Forked Android binding of QuickJS used by the plugin runtime; three native
+  entry points (`setMemoryLimit` / `setMaxStackSize` / `setInterruptTimeout`) were added
+  on top of `taoweiji/quickjs-android` 1.4.6 (Apache-2.0).

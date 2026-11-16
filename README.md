@@ -29,9 +29,15 @@ no shared code. Works with any OpenAI-compatible endpoint (DeepSeek, OpenRouter,
 
 - **Native UI, zero webview** — streaming chat, tool-call cards (`Bash` / `Edit` / `Glob` / `Grep` / `Search` / `Fetch` / `Ask`),
   collapsible `▸ Think` cards, inline code at comfortable size, real Markdown tables & LaTeX math
-- **Hooks (Type B)** — drop `manifest.json` + `main.js` into `files/plugins/`; hooks run in a sealed Rhino
-  sandbox (no Java, no file system, no network), may veto or rewrite tool calls, fail **closed**, and are
-  self-tested before they can be switched on
+- **Bilingual UI** — complete English and Chinese resources; plugin metadata can supply `description_en`;
+  the app follows the system/app locale
+- **Plugins v2, eight extension points** — tools, hooks, renderers, UI slots, state, actions, pages + nav,
+  themes. Drop `manifest.json` + `main.js` into `files/plugins/`; hooks/pages run in a sealed QuickJS
+  runtime (per-plugin memory, stack and time limits; fail **closed**), behind a runtime permission
+  gateway with action/state buses, theme packs, app overlays and a Shizuku-backed `bridge.adb`.
+- **Declarative UI framework** — pure-Java `UiNode` / `UiDiff` / `UiRenderer`; native Markdown tables,
+  code/tool cards, streaming `text.chunks`, cross-widget text selection, virtualized lists and horizontal
+  chip rows. No WebView.
 - **Reaches the internet** — `web_search` (Bing RSS, no API key) to find pages, `web_fetch` to read them as text
 - **Long sessions survive** — when the context outgrows its budget the older turns are summarized into
   one note instead of silently falling off a cliff

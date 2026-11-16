@@ -1,0 +1,45 @@
+{
+  "id": "midnight",
+  "name": "Midnight",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "深色主题：暗底、蓝紫强调色、圆角收窄，示例主题（纯数据，没有 main.js）。",
+  "permissions": [],
+  "contributes": {
+    "theme": {
+      "tokens": {
+        "color.bg":          { "light": "#FFFFFF", "dark": "#0B0C0E" },
+        "color.surface":     { "light": "#F5F6F8", "dark": "#15161A" },
+        "color.text":        { "light": "#111315", "dark": "#F2F4F6" },
+        "color.textSecondary": { "light": "#4A4F57", "dark": "#C3C8D0" },
+        "color.caption":     { "light": "#81858C", "dark": "#8B9099" },
+        "color.border":      { "light": "#00000014", "dark": "#FFFFFF14" },
+        "color.brand":       { "light": "#2F6FEB", "dark": "#7C9CFF" },
+        "color.ok":          { "light": "#128A4A", "dark": "#4ED17E" },
+        "color.warn":        { "light": "#B45309", "dark": "#F5A524" },
+        "color.danger":      { "light": "#C02626", "dark": "#FF6B6B" },
+        "color.codeBg":      { "light": "#F3F4F6", "dark": "#1B1B1C" },
+        "color.inlineBg":    { "light": "#ECEEF1", "dark": "#2F3033" },
+        "radius.card": 14,
+        "radius.button": 10,
+        "radius.chip": 999,
+        "space.gutter": 16,
+        "space.m": 12,
+        "font.body": 17,
+        "font.title": 20,
+        "font.caption": 12,
+        "font.mono": 14,
+        "motion.enter": "fade-rise",
+        "motion.exit": "fade",
+        "motion.duration": 180
+      },
+      "assets": {
+        "icon.send": "assets/send.svg",
+        "icon.newChat": "assets/new.svg"
+      },
+      "strings": {
+        "send": "出发"
+      }
+    }
+  }
+}

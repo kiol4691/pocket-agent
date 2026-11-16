@@ -1,0 +1,13 @@
+{
+  "id": "copy_raw",
+  "name": "Copy Raw",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "在每条 AI 消息底部加一个「复制原文」按钮。",
+  "entry": "main.js",
+  "permissions": ["ui.slot", "clipboard"],
+  "limits": { "budgetMs": 200, "budgetSteps": 100000 },
+  "contributes": {
+    "ui": [{ "slot": "message.footer", "handler": "footer" }]
+  }
+}

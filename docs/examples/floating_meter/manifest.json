@@ -1,0 +1,13 @@
+{
+  "id": "floating_meter",
+  "name": "Floating Meter",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "在应用内显示一个可拖动的上下文占用小浮层，点关闭即移除。",
+  "entry": "main.js",
+  "permissions": ["ui.overlay", "ui.slot", "state.read"],
+  "limits": { "budgetMs": 200, "budgetSteps": 100000 },
+  "contributes": {
+    "ui": [{ "slot": "composer.above", "handler": "toggleButton" }]
+  }
+}

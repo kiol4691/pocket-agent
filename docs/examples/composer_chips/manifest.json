@@ -1,0 +1,23 @@
+{
+  "id": "composer_chips",
+  "name": "Composer Chips",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "输入框上方一排可横向滚动的快捷 chip。",
+  "entry": "main.js",
+  "permissions": [
+    "ui.slot"
+  ],
+  "limits": {
+    "budgetMs": 300,
+    "budgetSteps": 100000
+  },
+  "contributes": {
+    "ui": [
+      {
+        "slot": "composer.above",
+        "handler": "chips"
+      }
+    ]
+  }
+}

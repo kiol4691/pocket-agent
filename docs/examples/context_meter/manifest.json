@@ -1,0 +1,13 @@
+{
+  "id": "context_meter",
+  "name": "Context Meter",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "在输入框上方显示上下文占用率（比如 62% · 62.0k / 100k）。",
+  "entry": "main.js",
+  "permissions": ["ui.slot", "state.read"],
+  "limits": { "budgetMs": 100, "budgetSteps": 50000 },
+  "contributes": {
+    "ui": [{ "slot": "composer.above", "handler": "meter" }]
+  }
+}

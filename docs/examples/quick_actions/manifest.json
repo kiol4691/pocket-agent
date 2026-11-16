@@ -1,0 +1,14 @@
+{
+  "id": "quick_actions",
+  "name": "Quick Actions",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "输入框上方一排快捷按钮：查看 git 状态、跑测试，结果以工具卡显示。",
+  "entry": "main.js",
+  "permissions": ["ui.slot", "tool.invoke", "hook.context"],
+  "toolAccess": { "allow": ["bash"], "confirm": true },
+  "limits": { "budgetMs": 200, "budgetSteps": 100000, "toolMs": 120000 },
+  "contributes": {
+    "ui": [{ "slot": "composer.above", "handler": "quickBar" }]
+  }
+}

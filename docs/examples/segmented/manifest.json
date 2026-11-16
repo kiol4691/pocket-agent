@@ -1,0 +1,13 @@
+{
+  "id": "segmented",
+  "name": "Segmented",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "把一整行当作分段控件：根据点击位置判断点了哪一段。",
+  "entry": "main.js",
+  "permissions": ["ui.slot"],
+  "limits": { "budgetMs": 100, "budgetSteps": 50000 },
+  "contributes": {
+    "ui": [{ "slot": "composer.above", "handler": "control" }]
+  }
+}

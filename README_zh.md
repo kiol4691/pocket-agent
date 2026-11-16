@@ -29,8 +29,14 @@ OpenAI 兼容端点（DeepSeek / OpenRouter / vLLM / one-api 等）。
 
 - **原生 UI、零 WebView**：流式对话、工具调用卡片（`Bash` / `Edit` / `Glob` / `Grep` / `Search` / `Fetch` / `Ask`）、
   可折叠 `▸ Think` 思考卡、舒适字号的内联代码、真正的 Markdown 表格与 LaTeX 公式渲染
-- **钩子（Type B）**：把 `manifest.json` + `main.js` 丢进 `files/plugins/`；脚本跑在封闭的 Rhino 沙箱
-  （无 Java、无文件、无网络），能否决或改写工具调用，失败按 **fail-closed** 拦下，启用前先自检
+- **中英双语界面**：完整的英文/中文资源；插件可用 `description_en` 提供英文说明；
+  界面跟随系统/应用语言
+- **插件系统 v2，8 类扩展点**：工具、钩子、渲染器、UI 插槽、状态、动作、页面+导航、主题。
+  把 `manifest.json` + `main.js` 丢进 `files/plugins/`；钩子/页面跑在封闭的 QuickJS runtime
+  （每插件内存/栈/超时上限，失败 **fail-closed**），经运行时权限网关授权，支持动作/状态总线、
+  主题包、应用内浮层与 Shizuku `bridge.adb`
+- **声明式 UI 框架**：纯 Java `UiNode` / `UiDiff` / `UiRenderer`；原生 Markdown 表格、代码卡/工具卡、
+  流式 `text.chunks`、跨控件文本选择、列表虚拟化与横向 chip 条。零 WebView
 - **能上网查**：`web_search`（Bing RSS，不需要额外 key）找页面，`web_fetch` 把页面读成纯文本
 - **长会话不会崩**：上下文超预算时把较早的对话压成一条摘要，而不是直接爆掉或悄悄截断
 - **该问就问**：`ask_user_question` 弹一张问题卡片，等你拍板再做有风险或有歧义的操作

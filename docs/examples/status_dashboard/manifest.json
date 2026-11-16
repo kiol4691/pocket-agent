@@ -1,0 +1,23 @@
+{
+  "id": "status_dashboard",
+  "name": "Status Dashboard",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "注册一个「运行状态」页面：上下文占用、最近轮次的 token 柱状图、一键重启服务。",
+  "entry": "main.js",
+  "permissions": ["ui.page", "state.read", "action.bind"],
+  "limits": { "budgetMs": 300, "budgetSteps": 200000 },
+  "contributes": {
+    "pages": [
+      {
+        "id": "runtime",
+        "title": "运行状态",
+        "handler": "renderRuntime",
+        "refreshMs": 5000
+      }
+    ],
+    "nav": [
+      { "page": "runtime", "label": "运行状态", "group": "工具", "order": 10 }
+    ]
+  }
+}

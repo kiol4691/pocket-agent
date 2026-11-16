@@ -1,5 +1,76 @@
 # Changelog
 
+## v0.6.0 — 2026-11-16
+
+### 插件系统 v2
+
+- **manifest v2 / 8 类扩展点**：工具、钩子、渲染器、UI 插槽、状态、动作、页面+导航、主题。
+  插件只需一个目录（`manifest.json` + `main.js`），不需要改 App 代码。
+- **QuickJS 钩子引擎**：Rhino 换成本地 fork 的 QuickJS，每个插件独立 runtime，带内存上限、
+  栈上限、墙钟超时；OOM/死循环后自动重置，钩子失败按 **fail-closed** 处理。
+- **权限网关**：网络、存储、exec、adb、剪贴板、通知、`tool.invoke`、定位、系统悬浮窗等
+  统一走运行时按范围授权；支持仅本次/始终/拒绝、插件级信任、审计与内容指纹校验。
+- **插件页面 / 导航**：`contributes.pages` + `contributes.nav`，宿主外壳自动生成
+  「插件页面」入口；页面支持 `refreshMs` 刷新、错误卡片与重试。
+- **动作总线 / 状态总线**：插件可提供/调用动作；实时状态用 `bind` 单向绑定，
+  宿主内置 `pocket.context.*`、`pocket.session.*` 等。
+- **主题 / 皮肤**：token（颜色/圆角/间距/字体/动效/图标）、assets、strings、skins；
+  切换即时生效，始终可恢复默认主题。
+- **bridge 能力**：log / config / storage / state / device / time / exec / http / fs / tool /
+  ui / nav / overlay / adb / secret / action / permission / location；`tool.invoke` 支持
+  `show` 工具卡与 `inject` 下一轮上下文。
+- **浮层**：应用内浮层（最多 3 个，拖动、进后台隐藏）与系统级悬浮窗（特殊授权、
+  前台服务通知、尺寸上限）。
+- **Shizuku ADB**：`bridge.adb` 接 Shizuku provider，支持 shell/exec、超时与逐条确认。
+- **看门狗**：连续 5 次失败自动禁用插件，回收 runtime，清状态/工具/渲染缓存。
+- **weather 示例**：Open-Meteo 同源失败重试，再失败自动切 wttr.in；WWO 码映射到 WMO，工具超时 45s→90s。
+
+### UI 框架
+
+- 新增声明式 UI 内核：`UiNode` / `UiDiff` / `UiRenderer` / `UiTheme`，纯 Java、零 WebView；
+  组件注册表支持插件 renderers 覆盖。
+- 聊天区迁移到框架：Markdown 表格、代码卡、工具卡、思考卡、流式 `text.chunks`。
+- `select` 跨控件文本选择/复制：长按选词、跨气泡连选、复制/全选/取消。
+- `list` 虚拟化：只挂视口 + overscan 行，500 行列表按窗口渲染；按实测行高校准估算，
+  修掉「滑到底最后一行够不着」。
+- 新增 `hscroll` 横向滚动容器；`composer.above` 可渲染输入框上方的 chip 条，
+  横向滑动查看超出视口的内容。
+- 交互节点（`on` / `action` 的 chip、按钮、可点卡片）默认不参与文本选择。
+
+### 稳定性 / 安全
+
+- 修启动 ANR：`HookEngine` 生命周期成功路径缺 `return` 导致 onEnable 无限重放；
+  插件初始化从主线程/渲染线程移到 `plugin-init` 后台线程。
+- 修 QuickJS 释放断言崩溃：上下文引用由 `WeakHashMap` 改为强引用，`plugin:reload`
+  不再必现 abort；释放改为阻塞并退出 JS 线程。
+- 事件队列阻塞等待加超时；单次 JS 调用 bridge 次数上限 2000；DebugLog 时间格式缓存。
+- 调试通道只在 debuggable 构建生效；release 不响应外部 `pocketroot_cmd`。
+- `tool.invoke` 的 bash 统一过 CommandGuard；adb 命令逐条确认；主题 skins 应用前确认。
+
+### 运行时 / Agent
+
+- guest 里 workspace 安装的 Node 24（`.local/node/bin`）优先进入 PATH，`dsh` 开箱可用。
+- 系统提示词从约 4.4k 精简到 2.6k 字符，移除 PostgreSQL / MySQL / MariaDB 的具体操作段；
+  保留非 root 安装、容器限制、工具规则与验证要求，避免把示例能力当成默认承诺。
+- 上下文压缩、摘要 max_tokens、/sdcard 提示等沿用并保持 v0.5.2 的修复。
+
+### 本地化
+
+- 默认 `values/strings.xml` 不再含中文；`values-zh` 与默认 **198 个 key 完全对齐**。
+- 插件设置页标签、授权弹窗的 label/scope/risk、动作 toast、代码卡复制、页面错误、
+  插件执行确认、失败策略等系统 UI 全部资源化，中英文界面不再混排。
+- 插件 manifest 新增可选 `description_en`；内置插件补英文说明并 bump 版本，
+  升级安装时会覆盖旧的示例插件说明。
+- 英文首页输入提示缩短为单行，避免 hint 换行把输入框撑高；中英文输入框高度一致。
+- 界面跟随系统/应用语言（Android per-app locale）；内置示例插件的**页面正文**仍由插件提供，
+  需要英文的插件可用 `bridge.device.language()` 自行分支（插件描述已支持 `description_en`）。
+
+### 文档 / 测试
+
+- 新增 `docs/PLUGIN.md`、`docs/PLUGIN_API.md`、`docs/UI_FRAMEWORK.md`、
+  `docs/plugin.schema.json` 与 `docs/examples/` 示例。
+- 单元测试 197 个全过；`assembleDebug` / `assembleRelease` 通过。
+
 ## v0.5.2 — 2026-11-11
 
 ### 运行时 / shim（pocketroot）

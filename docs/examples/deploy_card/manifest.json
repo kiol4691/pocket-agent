@@ -1,0 +1,24 @@
+{
+  "id": "deploy_card",
+  "name": "Deploy Card",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "把 AI 输出的 deploy 代码块渲染成状态卡片，带「重新部署」按钮。",
+  "entry": "main.js",
+  "permissions": ["render.match", "exec.guest"],
+  "config": [
+    {
+      "key": "script",
+      "label": "部署脚本",
+      "type": "string",
+      "default": "./scripts/deploy.sh",
+      "hint": "相对 /root/workspace 的路径"
+    }
+  ],
+  "limits": { "budgetMs": 300, "budgetSteps": 200000 },
+  "contributes": {
+    "renderers": [
+      { "id": "deploy", "match": { "fence": ["deploy"] }, "handler": "renderDeploy", "priority": 0 }
+    ]
+  }
+}

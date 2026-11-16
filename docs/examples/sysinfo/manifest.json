@@ -1,0 +1,20 @@
+{
+  "id": "sysinfo",
+  "name": "Sysinfo",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "给模型加一个 sysinfo 工具：设备型号、Android 版本、剩余空间。",
+  "entry": "main.js",
+  "permissions": ["tool.register", "device.info"],
+  "limits": { "budgetMs": 300, "toolMs": 5000 },
+  "contributes": {
+    "tools": [
+      {
+        "name": "sysinfo",
+        "description": "返回手机型号、Android SDK 版本和 /data 剩余空间。需要了解运行环境时调用。",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+        "handler": "runSysinfo"
+      }
+    ]
+  }
+}
