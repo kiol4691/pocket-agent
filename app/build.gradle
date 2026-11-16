@@ -24,8 +24,8 @@ android {
         // targetSdk 留在 29 以下。代价是不能上 Google Play（侧载分发）。
         targetSdk 28
         // 集成 pocketroot 运行时后递增，避免被当成降级安装（设备上已有 versionCode 8）
-        versionCode 12
-        versionName "0.5.2"
+        versionCode 13
+        versionName "0.6.0"
     }
 
     signingConfigs {
@@ -77,9 +77,12 @@ dependencies {
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    // 插件钩子（Type B）的 JS 引擎：纯 Java、无 native、可关掉一切 Java 访问。
-    // 只有解释器模式（optimizationLevel=-1）能保证指令回调生效，所以别开编译优化。
-    implementation 'org.mozilla:rhino:1.7.15'
+    // bridge.adb 的 Shizuku provider（本地无线 adb 配对暂未接线）
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
+    // 插件钩子（Type B）的 JS 引擎：本地 fork 的 QuickJS（qjsfork/，只发 arm64）。
+    // 相比 Rhino：冷启动 11ms vs 几十~几百 ms，且能设内存上限 / 栈上限 / 执行超时。
+    implementation project(':qjsfork')
     // 纯 Java 的 xz 解码（120 KB）：设备上没有 xz 二进制，toybox 的 -J 只是 exec 它，
     // 所以 xz 压缩的 rootfs 只能由 Java 解到 tar 再交给 toybox 解包。
     implementation 'org.tukaani:xz:1.10'
@@ -89,4 +92,9 @@ dependencies {
     implementation 'io.noties.markwon:ext-strikethrough:4.6.2'
     implementation 'io.noties.markwon:ext-tasklist:4.6.2'
     implementation 'io.noties.markwon:ext-latex:4.6.2'
+
+    // JVM 单测：只测纯 Java 的 UiNode / UiDiff，不需要真机
+    testImplementation 'junit:junit:4.13.2'
+    // 真机外的 manifest 解析测试需要真正的 org.json（android.jar 里是抛异常的桩）
+    testImplementation 'org.json:json:20240303'
 }

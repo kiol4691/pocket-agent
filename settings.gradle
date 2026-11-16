@@ -19,3 +19,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "dsh-android"
 include ':app'
+include ':pluginrt'
+include ':qjsfork'

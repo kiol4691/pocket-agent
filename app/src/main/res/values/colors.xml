@@ -22,6 +22,8 @@
     <color name="accent_green_dark">#23402C</color>
     <color name="accent_red">#F25A5A</color>            <!-- red-400 -->
     <color name="accent_red_dark">#3A2020</color>
+    <color name="accent_amber">#E5C07B</color>          <!-- warn 文案/边框 -->
+    <color name="accent_amber_dark">#3A3020</color>
     <!-- specific components -->
     <color name="bubble_user_bg">#2C2C2E</color>        <!-- specific-bubble = bluish-850 -->
     <color name="bubble_user_text">#F9FAFB</color>

@@ -136,6 +136,14 @@
                     android:text="@string/hero_env"
                     android:textColor="@color/text_caption"
                     android:textSize="11sp" />
+
+                <!-- 插件插槽 home.hero：无插件接管时高度为 0 -->
+                <LinearLayout
+                    android:id="@+id/pluginHomeSlot"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:orientation="vertical" />
             </LinearLayout>
 
             <LinearLayout
@@ -159,6 +167,13 @@
         android:paddingEnd="10dp"
         android:paddingTop="6dp"
         android:paddingBottom="10dp">
+
+        <!-- 插件插槽 composer.above：无插件接管时高度为 0 -->
+        <LinearLayout
+            android:id="@+id/pluginComposerSlot"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
 
         <HorizontalScrollView
             android:id="@+id/attachScroll"
@@ -304,6 +319,31 @@
                 android:paddingTop="2dp"
                 android:paddingBottom="16dp" />
         </ScrollView>
+
+        <!-- 插件插槽 drawer.footer + 插件页面入口 -->
+        <LinearLayout
+            android:id="@+id/pluginDrawerSlot"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp" />
+
+        <HorizontalScrollView
+            android:id="@+id/pluginPagesScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/pluginPages"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
 
         <!-- account row -->
         <LinearLayout

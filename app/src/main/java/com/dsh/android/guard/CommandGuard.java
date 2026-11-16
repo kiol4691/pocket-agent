@@ -69,7 +69,8 @@ public final class CommandGuard {
     /** 这些前缀不改变命令语义，但会让 verb 变成 sudo/env/... 从而绕过动词匹配。 */
     private static final Set<String> WRAPPERS = new HashSet<>(Arrays.asList(
             "sudo", "env", "nice", "nohup", "command", "time", "exec", "setsid",
-            "ionice", "taskset", "stdbuf", "timeout", "strace", "ltrace"));
+            "ionice", "taskset", "stdbuf", "timeout", "strace", "ltrace",
+            "busybox", "toybox"));
 
     private static final Pattern CRED = Pattern.compile(
             "/(\\.ssh/|id_rsa|id_ed25519|authorized_keys)|/etc/shadow|/etc/sudoers"
@@ -91,14 +92,24 @@ public final class CommandGuard {
     private CommandGuard() {
     }
 
-    /** 入口：判断这条命令该怎么处置。 */
+    /** 入口：按默认工作目录 /root/workspace 判断。 */
     public static Verdict check(String command) {
-        return check(command, 0);
+        return check(command, "/root/workspace");
     }
 
-    private static Verdict check(String command, int depth) {
+    /**
+     * 入口：按调用方给出的 cwd 解析相对路径。
+     * 之前固定按 /root/workspace 解析，插件把 cwd 设为 "/" 后 'rm -rf *' 会被当成工作区清理。
+     */
+    public static Verdict check(String command, String cwd) {
+        return checkInternal(command, normalizeCwd(cwd), 0);
+    }
+
+    private static Verdict checkInternal(String command, String cwd, int depth) {
         if (command == null) return Verdict.allow();
-        if (depth > 3) return Verdict.allow();
+        // 包装嵌套过深时静态分析不可靠：交用户确认，不能静默放行。
+        if (depth > 3) return new Verdict(Action.ASK, "nested_too_deep",
+                "命令包装嵌套过深，无法静态判断");
         String cmd = command;
 
         if (FORK_BOMB.matcher(cmd).find()) {
@@ -106,7 +117,6 @@ public final class CommandGuard {
         }
 
         List<String[]> items = segments(cmd);
-        String cwd = "/root/workspace";
         // 变量表：R=rm; $R -rf / 这种间接写法必须先还原，否则只看得到 $R
         java.util.Map<String, String> vars = new java.util.HashMap<>();
         // 常用环境变量：shell 里一定有值，静态分析也要给上，否则 "$HOME"/"$PWD" 永远解析不了
@@ -143,12 +153,50 @@ public final class CommandGuard {
                 for (int k = vi + 1; k < toks.size(); k++) {
                     inner.append(' ').append(resolveVars(toks.get(k), vars, 0));
                 }
-                Verdict nested = check(inner.toString(), depth + 1);
+                Verdict nested = checkInternal(inner.toString(), cwd, depth + 1);
                 if (nested.action != Action.ALLOW) return nested;
             }
             String verb = base(unquote(head));
 
-            // sudo/env/nice/nohup/command/time/exec 等包装动词会让 verb 不是危险动词，
+            // eval 把参数当命令执行；xargs 把管道输入拼成命令参数。
+            // 不做展开就等于留了一条绕过通道，这里先递归判内层，判不清就 ASK。
+            if ("eval".equals(verb)) {
+                StringBuilder inner = new StringBuilder();
+                for (int k = vi + 1; k < toks.size(); k++) {
+                    if (inner.length() > 0) inner.append(' ');
+                    inner.append(toks.get(k));
+                }
+                String body = unquote(resolveVars(inner.toString(), vars, 0));
+                Verdict nested = checkInternal(body, cwd, depth + 1);
+                if (nested.action != Action.ALLOW) return nested;
+                return new Verdict(Action.ASK, "eval",
+                        "eval 会执行运行时拼接的命令：" + (body.length() > 80
+                                ? body.substring(0, 80) + "…" : body));
+            }
+            if ("xargs".equals(verb)) {
+                int k = vi + 1;
+                while (k < toks.size()) {
+                    String t = unquote(toks.get(k));
+                    if (t.startsWith("-") || (t.contains("=") && !t.startsWith("/"))) {
+                        k++;
+                        continue;
+                    }
+                    break;
+                }
+                if (k < toks.size()) {
+                    StringBuilder inner = new StringBuilder();
+                    for (int q = k; q < toks.size(); q++) {
+                        if (inner.length() > 0) inner.append(' ');
+                        inner.append(toks.get(q));
+                    }
+                    Verdict nested = checkInternal(inner.toString(), cwd, depth + 1);
+                    if (nested.action != Action.ALLOW) return nested;
+                }
+                return new Verdict(Action.ASK, "xargs",
+                        "xargs 会把管道输入当作参数执行命令，无法静态确认");
+            }
+
+            // sudo/env/nice/nohup/busybox/command/time/exec 等包装动词会让 verb 不是危险动词，
             // 从而绕过 DESTRUCTIVE。找到内层真正的命令后递归判一遍。
             if (WRAPPERS.contains(verb)) {
                 for (int k = vi + 1; k < toks.size() && k < vi + 8; k++) {
@@ -158,23 +206,23 @@ public final class CommandGuard {
                         if (inner.length() > 0) inner.append(' ');
                         inner.append(toks.get(q));
                     }
-                    Verdict nested = check(inner.toString(), depth + 1);
+                    Verdict nested = checkInternal(inner.toString(), cwd, depth + 1);
                     if (nested.action != Action.ALLOW) return nested;
                     break;
                 }
             }
 
-            // sh -c '...' / bash -c "..."：把内层命令**递归**判一遍，
-            // 否则一层 shell 包裹就能绕过（"sh -c 'rm -rf /'"）。
+            // sh -c '...' / bash -ec '...'：把内层命令**递归**判一遍，
+            // 否则一层 shell 包裹就能绕过（"sh -ec 'rm -rf /'"）。
             if (SHELLS.contains(verb)) {
-                int ci = toks.indexOf("-c");
-                if (ci >= 0) {
+                int ci = shellCommandIndex(toks);
+                if (ci > 0) {
                     StringBuilder inner = new StringBuilder();
-                    for (int k = ci + 1; k < toks.size(); k++) {
+                    for (int k = ci; k < toks.size(); k++) {
                         if (inner.length() > 0) inner.append(' ');
                         inner.append(toks.get(k));
                     }
-                    Verdict v = check(unquote(inner.toString()), depth + 1);
+                    Verdict v = checkInternal(unquote(inner.toString()), cwd, depth + 1);
                     if (v.action != Action.ALLOW) return v;
                 }
             }
@@ -236,6 +284,29 @@ public final class CommandGuard {
                 if ("find".equals(verb)) break;      // find 只看起点
             }
 
+            // find ... -exec/-execdir：内层命令实际作用在 find 的结果上，
+            // 把起始路径替换进 {} 后递归判断，否则 'find /etc -exec rm {} ;' 会漏掉。
+            if ("find".equals(verb)) {
+                String start = targets.isEmpty() ? cwd : targets.get(0);
+                for (int k = vi + 1; k < toks.size(); k++) {
+                    String flag = unquote(toks.get(k));
+                    if (!"-exec".equals(flag) && !"-execdir".equals(flag)) continue;
+                    StringBuilder inner = new StringBuilder();
+                    int q = k + 1;
+                    for (; q < toks.size(); q++) {
+                        String a = unquote(toks.get(q));
+                        if (";".equals(a) || "+".equals(a)) break;
+                        if (inner.length() > 0) inner.append(' ');
+                        inner.append("{}".equals(a) ? start : a);
+                    }
+                    if (inner.length() > 0) {
+                        Verdict nested = checkInternal(inner.toString(), cwd, depth + 1);
+                        if (nested.action != Action.ALLOW) return nested;
+                    }
+                    k = q;
+                }
+            }
+
             boolean protectedTarget = false;
             for (String c : classes) {
                 if (c.equals("root") || c.equals("share") || c.startsWith("sys:")
@@ -243,6 +314,12 @@ public final class CommandGuard {
                     protectedTarget = true;
                     break;
                 }
+            }
+
+            // cp/mv 的最后一个路径参数是目标；写进 /etc、/system 等系统目录=破坏。
+            if (("cp".equals(verb) || "mv".equals(verb)) && !targets.isEmpty()) {
+                Verdict w = sensitiveWrite(verb, targets.get(targets.size() - 1));
+                if (w != null) return w;
             }
 
             // ln -sf 顶掉凭据/配置：不删不写，效果等同替换，DESTRUCTIVE 里没有它，
@@ -257,6 +334,8 @@ public final class CommandGuard {
                 if (link != null) {
                     String np = normalize(link, cwd);
                     String cls = np == null ? null : classify(np);
+                    Verdict sw = sensitiveWrite(verb, np);
+                    if (sw != null) return sw;
                     if (np != null && isCriticalLink(np)) {
                         return new Verdict(Action.BLOCK, "symlink_overwrite",
                                 "软链会顶掉受保护文件：" + np);
@@ -487,6 +566,42 @@ public final class CommandGuard {
         return val.contains("/root/workspace") || val.contains("/tmp") || val.contains("/sdcard");
     }
 
+    /** cwd 基本规范化：空值回落到 /root/workspace，相对路径按默认目录解析。 */
+    public static String normalizeCwd(String cwd) {
+        String c = cwd == null ? "" : cwd.trim();
+        if (c.isEmpty()) return "/root/workspace";
+        String n = normalize(c, "/root/workspace");
+        return n == null ? "/root/workspace" : n;
+    }
+
+    /** cp/mv/ln 的写入目标是否落在系统敏感目录（/data 属于用户数据，交给用户确认）。 */
+    private static Verdict sensitiveWrite(String verb, String path) {
+        if (path == null) return null;
+        for (String top : new String[]{"/etc", "/system", "/vendor", "/bin", "/sbin",
+                "/usr", "/lib", "/lib64", "/boot"}) {
+            if (path.equals(top) || path.startsWith(top + "/")) {
+                return new Verdict(Action.BLOCK, "write_sensitive",
+                        verb + " 写入系统敏感路径：" + path);
+            }
+        }
+        if (path.equals("/data") || path.startsWith("/data/")) {
+            return new Verdict(Action.ASK, "write_sensitive", verb + " 写入 /data：" + path);
+        }
+        return null;
+    }
+
+    /** 找到 shell 的 -c（含 -ec/-lc 这类合并短选项）后面的命令起点；找不到返回 -1。 */
+    private static int shellCommandIndex(List<String> toks) {
+        for (int k = 1; k < toks.size(); k++) {
+            String t = unquote(toks.get(k));
+            if (t.isEmpty()) continue;
+            if (!t.startsWith("-") || t.length() == 1) return -1;
+            if (t.startsWith("--")) continue;             // --noprofile 之类不是 -c
+            if (t.indexOf('c', 1) >= 0) return k + 1;     // -c / -ec / -lc
+        }
+        return -1;
+    }
+
     private static String base(String path) {
         int i = path.lastIndexOf('/');
         return i >= 0 ? path.substring(i + 1) : path;
@@ -501,6 +616,8 @@ public final class CommandGuard {
                 || v.equals("ln") || v.equals("link") || v.equals("unlink")
                 || v.equals("find") || v.equals("dd") || v.equals("kill")
                 || v.equals("pkill") || v.equals("killall")
+                || v.equals("eval") || v.equals("xargs")
+                || v.equals("busybox") || v.equals("toybox")
                 || SHELLS.contains(v) || v.startsWith("apt") || v.equals("dpkg");
     }
 

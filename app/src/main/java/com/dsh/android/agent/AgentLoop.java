@@ -34,9 +34,21 @@ public final class AgentLoop {
         default void onNotice(String note) {
         }
 
+        /** 本轮第几次模型调用（从 1 开始）；用于状态面板的 iteration。 */
+        default void onIteration(int iteration) {
+        }
+
+        /** 即将发出的上下文规模（估算 token / 消息条数）。 */
+        default void onContextStats(int tokens, int messages) {
+        }
+
         void onAssistantDelta(String delta);
 
         void onReasoningDelta(String delta);
+
+        /** 最终回答定稿文本（插件可能改写）；UI 用它覆盖流式缓冲后收尾。 */
+        default void onAssistantFinal(String text) {
+        }
 
         void onToolStart(ToolCall call);
 
@@ -64,6 +76,8 @@ public final class AgentLoop {
     private final JsonlSessionLog log;
     private final java.io.File workspaceDir;
     private final AtomicBoolean cancel = new AtomicBoolean(false);
+    /** 本轮已注入的字符数（bridge.tool.invoke inject:true）。 */
+    private int injectedChars;
     /** Type B 钩子；为 null 表示没有装插件系统。 */
     private com.dsh.android.plugin.HookRegistry hooks;
     /** 需要用户确认危险命令时用（与 ask_user_question 同一个 UI 桥）。 */
@@ -116,6 +130,9 @@ public final class AgentLoop {
     /** 带图片附件的用户消息入口：content 是 text + image_url 的多模态数组。 */
     public void run(ChatMessage userMsg, List<ChatMessage> history, Listener listener) {
         cancel.set(false);
+        injectedChars = 0;
+        // 注入队列按会话隔离：本回合只取开始时那个会话的备注，切会话不会串味。
+        final String injectSession = com.dsh.android.plugin.PluginInjections.activeSession();
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(systemPrompt));
         if (history != null && !history.isEmpty()) {
@@ -126,8 +143,17 @@ public final class AgentLoop {
                 messages.add(m);
             }
         }
-        messages.add(userMsg);
-        appendLog(messages.get(messages.size() - 1));
+        ChatMessage effectiveUser = userMsg;
+        if (hooks != null) {
+            com.dsh.android.plugin.HookRegistry.MessageDecision um = hooks.userMessage(userMsg);
+            if (!um.allow) {
+                listener.onError("消息被插件拦截: " + um.reason);
+                return;
+            }
+            if (um.text != null) effectiveUser = userMsg.withContent(um.text);
+        }
+        messages.add(effectiveUser);
+        appendLog(effectiveUser);
         listener.onTurnStart();
 
         // 模型摘要是额外一次网络往返，只在回合开始时做一次；
@@ -152,6 +178,42 @@ public final class AgentLoop {
                 compactions++;
                 compact(messages, listener);
             }
+
+            if (hooks != null) {
+                com.dsh.android.plugin.HookRegistry.ContextDecision cb = hooks.contextBuild(messages);
+                if (!cb.allow) {
+                    listener.onError("上下文钩子拦截本轮请求: " + cb.reason);
+                    return;
+                }
+                if (cb.messages != null) {
+                    messages.clear();
+                    messages.addAll(cb.messages);
+                }
+            }
+
+            // 插件通过 bridge.tool.invoke({inject:true}) 排队的备注，作为 system 消息
+            // 插在本次请求前；单轮总量 16 KB，超出部分截断丢弃。
+            int injectLeft = com.dsh.android.plugin.PluginInjections.MAX_TURN - injectedChars;
+            if (injectLeft <= 0
+                    && com.dsh.android.plugin.PluginInjections.pendingCount(injectSession) > 0) {
+                Log.w(TAG, "plugin inject: turn budget exhausted, dropping "
+                        + com.dsh.android.plugin.PluginInjections.pendingCount(injectSession)
+                        + " note(s)");
+            }
+            java.util.List<String> notes =
+                    com.dsh.android.plugin.PluginInjections.takeForTurn(injectSession, injectLeft);
+            for (String note : notes) {
+                messages.add(ChatMessage.system(note));
+                injectedChars += note.length();
+            }
+            if (!notes.isEmpty()) {
+                Log.i(TAG, "plugin inject: " + notes.size() + " note(s), "
+                        + injectedChars + "/" + com.dsh.android.plugin.PluginInjections.MAX_TURN
+                        + " chars this turn");
+            }
+
+            listener.onIteration(iter);
+            listener.onContextStats(ContextCompactor.estimateTokens(messages), messages.size());
 
             DeepSeekClient.AssistantResult res;
             final StringBuilder reasoningBuf = new StringBuilder();
@@ -191,6 +253,15 @@ public final class AgentLoop {
             String content = res.content == null ? "" : res.content;
             List<ToolCall> calls = res.toolCalls;
             boolean hasCalls = calls != null && !calls.isEmpty();
+            // 只对最终回答跑 assistantMessage 钩子；带 tool_calls 的中间输出改写会与流式 UI 脱节。
+            if (!hasCalls && hooks != null) {
+                com.dsh.android.plugin.HookRegistry.MessageDecision am = hooks.assistantMessage(content);
+                if (!am.allow) {
+                    listener.onError("插件拦截回答: " + am.reason);
+                    return;
+                }
+                if (am.text != null) content = am.text;
+            }
 
             ChatMessage assistantMsg = ChatMessage.assistant(content, hasCalls ? calls : null,
                     reasoningBuf.length() == 0 ? null : reasoningBuf.toString());
@@ -198,6 +269,7 @@ public final class AgentLoop {
             appendLog(assistantMsg);
 
             if (!hasCalls) {
+                listener.onAssistantFinal(content);
                 listener.onFinished(content);
                 return;
             }

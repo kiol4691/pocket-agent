@@ -6,6 +6,7 @@ import android.widget.TextView;
 
 import io.noties.markwon.AbstractMarkwonPlugin;
 import io.noties.markwon.Markwon;
+import io.noties.markwon.MarkwonVisitor;
 import io.noties.markwon.core.CorePlugin;
 import io.noties.markwon.core.MarkwonTheme;
 import io.noties.markwon.ext.latex.JLatexMathPlugin;
@@ -13,6 +14,10 @@ import io.noties.markwon.ext.strikethrough.StrikethroughPlugin;
 import io.noties.markwon.ext.tables.TablePlugin;
 import io.noties.markwon.ext.tables.TableTheme;
 import io.noties.markwon.ext.tasklist.TaskListPlugin;
+
+import org.commonmark.node.BulletList;
+import org.commonmark.node.Node;
+import org.commonmark.node.OrderedList;
 
 /**
  * Markdown rendering backed by the Markwon library (CommonMark + GFM tables,
@@ -38,15 +43,15 @@ public final class MarkdownRenderer {
         final int secondary = 0xFFCFD3D6;
         final int caption = 0xFF81858C;
         final int codeBg = 0xFF1B1B1C;
-        final int inlineBg = 0x1A2C2C2E;
+        final int inlineBg = 0xFF2F3033;
         final int borderAlpha = 0x26FFFFFF;
 
         TableTheme tableTheme = TableTheme.buildWithDefaults(appContext)
-                .tableCellPadding(8)
-                .tableBorderColor(borderAlpha)
-                .tableBorderWidth(2)
-                .tableHeaderRowBackgroundColor(0x1AFFFFFF)
-                .tableOddRowBackgroundColor(0x0AFFFFFF)
+                .tableCellPadding(6)
+                .tableBorderColor(0x14FFFFFF)
+                .tableBorderWidth(1)
+                .tableHeaderRowBackgroundColor(0x1FFFFFFF)
+                .tableOddRowBackgroundColor(0x00FFFFFF)
                 .tableEvenRowBackgroundColor(0x00151517)
                 .build();
 
@@ -77,12 +82,39 @@ public final class MarkdownRenderer {
                     }
 
                     @Override
+                    public void configureVisitor(MarkwonVisitor.Builder builder) {
+                        // 默认 BlockHandlerDef 会在每个块结束、且后面还有兄弟块时
+                        // ensureNewLine() + forceNewLine()，也就是强制插一个空行。
+                        // 于是「说明文字 / 小标题」后面紧跟 “1.” 时，1. 前面总有一条
+                        // 空白行。这里保持段落之间的空行，只把「→ 列表」这一种情况收紧：
+                        // 列表从下一行开始，不再额外空一行。
+                        builder.blockHandler(new MarkwonVisitor.BlockHandler() {
+                            @Override
+                            public void blockStart(MarkwonVisitor visitor, Node node) {
+                                visitor.ensureNewLine();
+                            }
+
+                            @Override
+                            public void blockEnd(MarkwonVisitor visitor, Node node) {
+                                if (!visitor.hasNext(node)) return;
+                                visitor.ensureNewLine();
+                                Node next = node.getNext();
+                                if (next instanceof OrderedList || next instanceof BulletList) {
+                                    return;
+                                }
+                                visitor.forceNewLine();
+                            }
+                        });
+                    }
+
+                    @Override
                     public void beforeSetText(TextView textView, Spanned markdown) {
                         // links still need a movement method to be clickable
                         textView.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
                     }
                 })
                 .usePlugin(TablePlugin.create(tableTheme))
+                .usePlugin(new TableNodePlugin(14 * appContext.getResources().getDisplayMetrics().scaledDensity))
                 .usePlugin(StrikethroughPlugin.create())
                 .usePlugin(TaskListPlugin.create(appContext))
                 .usePlugin(JLatexMathPlugin.create(latexPx, latexPx, builder -> builder
@@ -167,11 +199,23 @@ public final class MarkdownRenderer {
      *  Markwon 的插件钩子只在 setMarkdown/setParsedMarkdown 时触发，
      *  LaTeX 的 AsyncDrawableScheduler.schedule() 就在钩子里。 */
     public static void setText(TextView textView, String md) {
+        // ReplacementSpan 的 getSize 拿不到容器宽度：这里在解析前把 TextView 的
+        // 内容宽度交给表格 span（构造 span 时捕获为实例字段），按实际可用宽度分列。
+        float density = textView.getResources().getDisplayMetrics().density;
+        int width = textView.getWidth() - textView.getPaddingLeft() - textView.getPaddingRight();
+        if (width <= 0) {
+            width = textView.getResources().getDisplayMetrics().widthPixels - (int) (36 * density + 0.5f);
+        }
+        WeightedTableSpan.setAvailableWidth(Math.max((int) (240 * density + 0.5f), width));
         markwon.setMarkdown(textView, preprocess(md));
     }
 
     private static String preprocess(String md) {
-        String s = normalizeLatexDelimiters(md == null ? "" : md);
+        String s = md == null ? "" : md;
+        // 不含 $ / \ / ^ 时三条正则都不可能命中（bare latex 只靠 \ 命令或 ^ 触发），
+        // 直接返回，省掉整段的 matcher/split，输出与处理后完全一致。
+        if (s.indexOf('$') < 0 && s.indexOf('\\') < 0 && s.indexOf('^') < 0) return s;
+        s = normalizeLatexDelimiters(s);
         s = wrapSingleDollarMath(s);
         return wrapBareLatexLines(s);
     }

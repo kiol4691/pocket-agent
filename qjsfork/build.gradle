@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.library'
+}
+
+// Fork 自 taoweiji/quickjs-android 1.4.6（Apache-2.0），补了三个 native 入口：
+//   _setMemoryLimit / _setMaxStackSize / _setInterruptTimeout
+// 只保留 arm64：宿主 App 也只发 arm64。
+android {
+    namespace 'com.quickjs'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 26
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags ''
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            // 与宿主 App 一致：解压安装，规避部分机型的 mmap 限制
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.annotation:annotation:1.7.1'
+}

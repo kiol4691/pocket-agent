@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View.setTag(int, Object) 只接受应用资源 id，不能用 View.generateViewId() -->
+    <item name="tag_select_scope" type="id" />
+    <item name="tag_select_hub" type="id" />
+    <item name="tag_select_include" type="id" />
+    <item name="tag_select_owner" type="id" />
+    <item name="tag_select_exclude" type="id" />
+    <item name="tag_select_text_touch" type="id" />
+    <item name="tag_select_chain" type="id" />
+</resources>

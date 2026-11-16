@@ -11,6 +11,9 @@ import java.util.Locale;
 public final class DebugLog {
 
     private static File logFile;
+    /** 每行都 new SimpleDateFormat 会连带初始化 ICU 货币表，单条日志可达几十毫秒。 */
+    private static final ThreadLocal<SimpleDateFormat> TS =
+            ThreadLocal.withInitial(() -> new SimpleDateFormat("HH:mm:ss.SSS", Locale.US));
 
     public static void init(Context ctx) {
         logFile = new File(ctx.getFilesDir(), "dsh.log");
@@ -32,7 +35,7 @@ public final class DebugLog {
         android.util.Log.i("DSH", "[" + level + "] " + msg);
         if (logFile == null) return;
         try {
-            String ts = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
+            String ts = TS.get().format(new Date());
             String line = ts + " " + level + " " + msg + "\n";
             java.io.FileWriter fw = new java.io.FileWriter(logFile, true);
             fw.write(line);

@@ -1,0 +1,46 @@
+{
+  "id": "echo_tool",
+  "name": "Echo Tool",
+  "version": "0.1.2",
+  "apiVersion": 2,
+  "type": "tool",
+  "description": "示例：向模型注册一个无副作用的 echo 工具，并提供 echo_tool.say 动作。",
+  "description_en": "Sample: registers a side-effect-free echo tool for the model and an echo_tool.say action.",
+  "author": "you",
+  "entry": "main.js",
+  "permissions": ["tool.register", "action.provide"],
+  "limits": { "budgetMs": 300, "toolMs": 5000 },
+  "contributes": {
+    "hooks": [],
+    "actions": [
+      {
+        "id": "echo_tool.say",
+        "label": "Echo Action",
+        "params": {
+          "type": "object",
+          "properties": { "text": { "type": "string" } },
+          "required": ["text"]
+        }
+      }
+    ],
+    "tools": [
+      {
+        "name": "echo",
+        "description": "回显一段文本；upper=true 时转成大写。无副作用，用于验证插件工具链路。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string", "description": "要回显的文本" },
+            "upper": { "type": "boolean", "default": false, "description": "是否转大写" }
+          },
+          "required": ["text"],
+          "additionalProperties": false
+        },
+        "handler": "echoTool",
+        "timeoutMs": 5000
+      }
+    ]
+  },
+  "onError": "allow",
+  "priority": 0
+}

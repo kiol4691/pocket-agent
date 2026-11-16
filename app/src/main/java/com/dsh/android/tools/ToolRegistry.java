@@ -17,6 +17,19 @@ public final class ToolRegistry {
         tools.put(t.name(), t);
     }
 
+    /** 当前已注册的工具名（插件工具注册前用它判断重名）。 */
+    public java.util.Set<String> names() {
+        return new java.util.LinkedHashSet<>(tools.keySet());
+    }
+
+    public Tool get(String name) {
+        return tools.get(name);
+    }
+
+    public java.util.Collection<Tool> all() {
+        return new java.util.ArrayList<>(tools.values());
+    }
+
     public JSONArray schemas() throws JSONException {
         JSONArray arr = new JSONArray();
         for (Tool t : tools.values()) arr.put(t.schema());

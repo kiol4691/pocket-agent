@@ -1,0 +1,43 @@
+{
+  "id": "weather",
+  "name": "Weather",
+  "version": "0.1.3",
+  "apiVersion": 2,
+  "type": "tool",
+  "description": "示例：get_weather 工具（定位 → Open-Meteo，失败时 wttr.in 兜底）+ weather 围栏卡片渲染器。",
+  "description_en": "Sample: get_weather tool (location -> Open-Meteo with wttr.in fallback -> card prompt) + weather fence renderer.",
+  "author": "you",
+  "entry": "main.js",
+  "permissions": ["tool.register", "render.match", "net.http", "location"],
+  "androidPermissions": ["android.permission.ACCESS_FINE_LOCATION",
+                         "android.permission.ACCESS_COARSE_LOCATION"],
+  "net": { "allow": ["api.open-meteo.com", "api.bigdatacloud.net", "wttr.in"] },
+  "limits": { "budgetMs": 300, "toolMs": 90000 },
+  "contributes": {
+    "hooks": [],
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "获取设备当前位置的天气：先用定位拿到经纬度，查询 Open-Meteo 的当前天气与未来 3 天预报，失败时自动改用 wttr.in。返回结果里附带一段卡片渲染提示词，最终回复必须原样输出其中的 ```weather 代码块```，客户端会渲染成天气卡片。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "highAccuracy": {
+              "type": "boolean",
+              "default": true,
+              "description": "是否优先使用 GPS 高精度定位"
+            }
+          },
+          "additionalProperties": false
+        },
+        "handler": "getWeather",
+        "timeoutMs": 90000
+      }
+    ],
+    "renderers": [
+      { "id": "weather", "match": { "fence": ["weather"] }, "handler": "renderWeather" }
+    ]
+  },
+  "onError": "allow",
+  "priority": 0
+}

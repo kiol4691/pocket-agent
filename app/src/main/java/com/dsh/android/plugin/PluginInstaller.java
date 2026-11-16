@@ -32,12 +32,17 @@ public final class PluginInstaller {
         }
     }
 
+    /** manifest 可能超过 4KB，循环读满到上限（1MB）再解析，避免截断成非法 JSON。 */
     private static String versionOfAsset(AssetManager am, String id) {
         try (InputStream in = am.open("plugins/" + id + "/manifest.json")) {
-            byte[] buf = new byte[4096];
-            int n = in.read(buf);
-            String text = new String(buf, 0, Math.max(n, 0), "UTF-8");
-            return new org.json.JSONObject(text).optString("version", "0");
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            int max = 1 << 20;
+            while (out.size() < max && (n = in.read(buf)) > 0) {
+                out.write(buf, 0, Math.min(n, max - out.size()));
+            }
+            return new org.json.JSONObject(out.toString("UTF-8")).optString("version", "0");
         } catch (Exception e) {
             return "0";
         }

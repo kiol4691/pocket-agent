@@ -1,0 +1,22 @@
+{
+  "id": "deploy_card",
+  "name": "Deploy Card",
+  "version": "0.1.1",
+  "apiVersion": 2,
+  "type": "renderer",
+  "description": "示例：把 deploy 代码块 / DEPLOY: 前缀文本渲染成状态卡片（renderers 覆盖链）。",
+  "description_en": "Sample: renders deploy code fences / DEPLOY: text as a status card (renderer override chain).",
+  "permissions": ["render.match"],
+  "contributes": {
+    "hooks": [],
+    "renderers": [
+      { "id": "deploy", "match": { "fence": ["deploy", "deploy-status"] }, "handler": "renderDeploy" },
+      { "id": "deploy_text", "match": { "prefix": "DEPLOY:" }, "handler": "renderDeploy", "priority": 10 },
+      { "id": "status", "match": { "regex": "^\\[status\\]" }, "handler": "renderStatus", "priority": 20 }
+    ]
+  },
+  "onError": "allow",
+  "priority": 0,
+  "limits": { "budgetMs": 300 },
+  "entry": "main.js"
+}

@@ -588,6 +588,8 @@ public class ProrootRuntime {
 
         Process proc;
         try {
+            // 先删掉上一次的 pidfile，避免读到旧 pid（超时时会误杀无关进程组）。
+            pidFile.delete();
             proc = pb.start();
         } catch (IOException e) {
             return "Error launching proroot: " + e.getMessage();
@@ -609,18 +611,18 @@ public class ProrootRuntime {
         reader.setDaemon(true);
         reader.start();
 
+        // 结束条件以「主命令进程退出」为准。shim 的 supervisor 会继承 stdout/stderr
+        // 并常驻，如果等管道 EOF，命令已经跑完也会挂到超时（node 这类会频繁
+        // 触发 seccomp 通知的最容易中招）。
         long deadline = System.currentTimeMillis() + timeoutMs;
-        boolean timedOut = false;
-        while (!done.get() && System.currentTimeMillis() < deadline) {
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                timedOut = true;
-                break;
-            }
+        boolean exited = false;
+        try {
+            exited = proc.waitFor(Math.max(1L, deadline - System.currentTimeMillis()),
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
-        if (!done.get()) timedOut = true;
+        boolean timedOut = !exited;
 
         long grace = Math.min(timeoutMs, 30_000L);
         if (timedOut) {
@@ -629,19 +631,34 @@ public class ProrootRuntime {
                 proc.waitFor(grace, java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch (InterruptedException ignored) {
             }
-            if (proc.isAlive()) {
-                proc.destroyForcibly();
-                if (pid > 0) killProcessGroup(pid);
-            }
-        } else {
+        }
+        // 主进程已退出后，同一会话组里可能还留着 shim supervisor（它握着管道）；
+        // 正常结束也清理进程组，否则 reader 永远等不到 EOF。
+        if (pid > 0) killProcessGroup(pid);
+        if (proc.isAlive()) proc.destroyForcibly();
+        // 给 reader 一点时间把管道里剩余的输出读完；仍不结束时关闭读端解除阻塞。
+        long drainUntil = System.currentTimeMillis() + 1_000L;
+        while (!done.get() && System.currentTimeMillis() < drainUntil) {
             try {
-                proc.waitFor();
+                Thread.sleep(20);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (!done.get()) {
+            try {
+                proc.getInputStream().close();
+            } catch (IOException ignored) {
             }
         }
 
-        int exit = proc.exitValue();
+        int exit;
+        try {
+            exit = proc.exitValue();
+        } catch (IllegalThreadStateException e) {
+            exit = -1;
+        }
         StringBuilder result = new StringBuilder();
         if (timedOut) result.append("TIMEOUT after ").append(timeoutMs).append(" ms; process group was killed.\n");
         final String text;

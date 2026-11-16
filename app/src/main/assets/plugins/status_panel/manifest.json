@@ -1,0 +1,71 @@
+{
+  "id": "status_panel",
+  "name": "Status Panel",
+  "version": "0.7.1",
+  "apiVersion": 2,
+  "type": "ui",
+  "description": "示例：首页插槽 + 状态/导航/bridge 页面（插槽 / 页面 / 动作 / 状态 / bridge）。",
+  "description_en": "Sample: home slot + status/nav/bridge pages (slot / page / action / state / bridge).",
+  "author": "you",
+  "entry": "main.js",
+  "permissions": ["ui.slot", "ui.page", "ui.overlay", "action.provide", "action.bind",
+                  "state.provide", "state.read", "device.info", "env.time",
+                  "exec.guest", "fs.workspace", "tool.invoke", "clipboard", "notify",
+                  "overlay.system", "net.http", "location"],
+  "androidPermissions": ["android.permission.ACCESS_FINE_LOCATION",
+                         "android.permission.ACCESS_COARSE_LOCATION"],
+  "toolAccess": { "allow": ["echo"], "confirm": true },
+  "net": { "allow": ["httpbin.org"] },
+  "config": [
+    { "key": "label", "label": "面板标题", "type": "string", "default": "状态面板" }
+  ],
+  "limits": { "budgetMs": 400 },
+  "contributes": {
+    "ui": [
+      { "slot": "home.hero", "handler": "renderHero" }
+    ],
+    "pages": [
+      {
+        "id": "status",
+        "title": "状态面板",
+        "handler": "renderStatusPage",
+        "refreshMs": 5000,
+        "scroll": true
+      },
+      {
+        "id": "nav",
+        "title": "导航菜单",
+        "handler": "renderNavPage",
+        "scroll": true
+      },
+      {
+        "id": "bridge",
+        "title": "Bridge 演示",
+        "handler": "renderBridgePage",
+        "refreshMs": 3000,
+        "scroll": true
+      }
+    ],
+    "nav": [
+      { "page": "status_panel.status", "label": "状态面板", "group": "工具", "order": 10 },
+      { "page": "status_panel.nav", "label": "导航菜单", "group": "工具", "order": 20 },
+      { "page": "status_panel.bridge", "label": "Bridge 演示", "group": "工具", "order": 30 }
+    ],
+    "actions": [
+      {
+        "id": "status_panel.ping",
+        "label": "Ping",
+        "params": {
+          "type": "object",
+          "properties": { "text": { "type": "string" } },
+          "required": ["text"]
+        }
+      }
+    ],
+    "state": [
+      { "id": "ticks", "label": "刷新次数", "type": "number" }
+    ]
+  },
+  "onError": "allow",
+  "priority": 0
+}

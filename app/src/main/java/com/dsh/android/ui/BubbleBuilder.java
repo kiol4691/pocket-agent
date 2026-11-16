@@ -1,6 +1,7 @@
 package com.dsh.android.ui;
 
 import com.dsh.android.R;
+import com.dsh.android.ui.framework.HostTheme;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -60,17 +61,27 @@ public final class BubbleBuilder {
 
     public enum Kind { PROSE, TABLE, CODE }
 
-    private static final class Block {
-        final Kind kind;
-        final String text;          // PROSE source or CODE source
-        final String lang;          // CODE language, may be empty
-        final List<String[]> rows;  // TABLE: rows[0] = header
+    /** 引用表格的卡片 id：外层是「竖线 + 卡片」，表格本体靠它定位。 */
+    private static final int TABLE_CARD_ID = 0x44544155;
+
+    /** 一段顶层内容：prose / 表格 / 代码块。框架渲染（ChatBlockView）也用它。 */
+    public static final class Block {
+        public final Kind kind;
+        public final String text;          // PROSE source or CODE source
+        public final String lang;          // CODE language, may be empty
+        public final List<String[]> rows;  // TABLE: rows[0] = header
+        public final boolean quoted;       // TABLE: came from a `> ` blockquote
 
         private Block(Kind kind, String text, String lang, List<String[]> rows) {
+            this(kind, text, lang, rows, false);
+        }
+
+        private Block(Kind kind, String text, String lang, List<String[]> rows, boolean quoted) {
             this.kind = kind;
             this.text = text;
             this.lang = lang;
             this.rows = rows;
+            this.quoted = quoted;
         }
     }
 
@@ -142,6 +153,30 @@ public final class BubbleBuilder {
                 i = j + 1;
                 continue;
             }
+            // 引用块里的表格：去掉 `>` 引子按表格渲染，竖线由卡片左边缘补上（见 buildTableCard），
+            // 这样线紧贴表格、右边不留缝，引用里的普通文字则保持原来的缩进。
+            if (isQuoteLine(lines[i]) && i + 1 < n) {
+                String head = quoteContent(lines[i]);
+                if (head.contains("|") && isTableSeparator(quoteContent(lines[i + 1]).trim())) {
+                    flushProse(blocks, prose, hasProse);
+                    hasProse = false;
+                    String[] header = splitRow(head);
+                    List<String[]> rows = new ArrayList<>();
+                    int j = i + 2;
+                    while (j < n && isQuoteLine(lines[j])) {
+                        String r = quoteContent(lines[j]).trim();
+                        if (r.isEmpty() || isTableSeparator(r) || !r.contains("|")) break;
+                        rows.add(splitRow(r));
+                        j++;
+                    }
+                    List<String[]> all = new ArrayList<>(rows.size() + 1);
+                    all.add(header);
+                    all.addAll(rows);
+                    blocks.add(new Block(Kind.TABLE, null, null, all, true));
+                    i = j;
+                    continue;
+                }
+            }
             if (trim.contains("|") && i + 1 < n && isTableSeparator(lines[i + 1].trim())) {
                 flushProse(blocks, prose, hasProse);
                 hasProse = false;
@@ -161,7 +196,10 @@ public final class BubbleBuilder {
                 i = j;
                 continue;
             }
-            if (i >= holdFrom && trim.startsWith("|") && !isTableSeparator(trim)) {
+            // 还没等到分隔行的表格（含引用块里的）先按住不渲染，避免流式过程中
+            // 把半截 `| a | b |` 原样吐到界面上。
+            String cell = isQuoteLine(lines[i]) ? quoteContent(lines[i]) : trim;
+            if (i >= holdFrom && cell.trim().startsWith("|") && !isTableSeparator(cell.trim())) {
                 break;
             }
             prose.append(lines[i]).append('\n');
@@ -184,6 +222,20 @@ public final class BubbleBuilder {
         return line.contains("-") && TABLE_SEP.matcher(line).matches();
     }
 
+    private static boolean isQuoteLine(String line) {
+        return line.trim().startsWith(">");
+    }
+
+    /** 去掉一层或多层 `>` 引子，返回引用里的正文。 */
+    private static String quoteContent(String line) {
+        String s = line.trim();
+        while (s.startsWith(">")) {
+            s = s.substring(1);
+            if (s.startsWith(" ")) s = s.substring(1);
+        }
+        return s;
+    }
+
     private static String[] splitRow(String line) {
         String s = line.trim();
         if (s.length() > 1 && s.charAt(0) == '|') s = s.substring(1);
@@ -195,6 +247,9 @@ public final class BubbleBuilder {
 
     // --------------------------------------------------------------- sync
 
+    /** true = 用框架节点树渲染（阶段 5 迁移）；false = 旧的自建 View 路径，真机 A/B 用。 */
+    public static boolean USE_FRAMEWORK = true;
+
     public static void sync(LinearLayout bubble, String md, Context ctx, Style style) {
         sync(bubble, md, ctx, style, false);
     }
@@ -202,6 +257,10 @@ public final class BubbleBuilder {
     /** streaming=true 时给尾部新增的文字做淡入；false 时收尾清理。 */
     public static void sync(LinearLayout bubble, String md, Context ctx, Style style,
                             boolean streaming) {
+        if (USE_FRAMEWORK) {
+            ChatBlockView.render(bubble, md, streaming);
+            return;
+        }
         List<Block> blocks = split(md);
         Store store = (Store) bubble.getTag();
         if (store == null) {
@@ -303,7 +362,7 @@ public final class BubbleBuilder {
     private static View buildView(Context ctx, Block b, Style style) {
         switch (b.kind) {
             case TABLE:
-                return buildTableCard(ctx, style);
+                return buildTableCard(ctx, style, b.quoted);
             case CODE:
                 return buildCodeCard(ctx, style);
             default:
@@ -319,7 +378,9 @@ public final class BubbleBuilder {
             // 只做了解析，公式会永远停在原文。
             MarkdownRenderer.setText(tv, b.text);
         } else if (b.kind == Kind.TABLE) {
-            renderTableGrid((LinearLayout) view, b.rows, style);
+            // 引用块里的表格外面还套了一层「竖线 + 卡片」，表格本体按 id 找。
+            View card = view.findViewById(TABLE_CARD_ID);
+            renderTableGrid((LinearLayout) (card != null ? card : view), b.rows, style);
         } else {
             TextView body = (TextView) ((LinearLayout) view).findViewById(0x44544142);
             body.setText(b.text);
@@ -327,9 +388,9 @@ public final class BubbleBuilder {
             TextView copy = (TextView) ((LinearLayout) view).findViewById(0x44544143);
             String tag = (String) copy.getTag();
             if (tag != null && tag.equals(b.text)) {
-                copy.setText(ctx.getString(R.string.copy_copied));
+                copy.setText(HostTheme.label("copy", ctx.getString(R.string.copy_copied)));
             } else {
-                copy.setText(ctx.getString(R.string.copy_code));
+                copy.setText(HostTheme.label("copy", ctx.getString(R.string.copy_code)));
             }
             lang.setText(b.lang == null || b.lang.isEmpty() ? "code" : b.lang);
         }
@@ -353,12 +414,47 @@ public final class BubbleBuilder {
         return tv;
     }
 
-    private static View buildTableCard(Context ctx, Style style) {
+    /** 表格卡片：背景 + 横向滚动的网格。引用块里的表格在左侧补一根竖线（与引用
+     *  文字的竖条同色同宽），卡片左边改成直角，让线紧贴表格、不出现缝隙。 */
+    private static View buildTableCard(Context ctx, Style style, boolean quoted) {
         LinearLayout card = new LinearLayout(ctx);
+        card.setId(TABLE_CARD_ID);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackground(rounded(style.codeBg, dp(10)));
+        card.setBackground(quoted
+                ? roundedLeftSquare(style.codeBg, dp(10))
+                : rounded(style.codeBg, dp(10)));
         setLayoutFill(card);
-        return card;
+
+        // 表格按内容自然宽度排布：塞不下时整表横向滚动，而不是把路径列压成一条。
+        HorizontalScrollView hsv = new HorizontalScrollView(ctx);
+        hsv.setHorizontalScrollBarEnabled(true);
+        LinearLayout grid = new LinearLayout(ctx);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        hsv.addView(grid, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        card.addView(hsv, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        if (!quoted) return card;
+
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        // Markwon 的引用竖条是内缩 3dp 画的（x=38 而不是 32），这里跟着缩进，
+        // 免得混排时文字竖线和表格竖线差一根线的宽度。
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowLp.leftMargin = dp(3);
+        row.setLayoutParams(rowLp);
+        View bar = new View(ctx);
+        bar.setBackgroundColor(style.caption);
+        row.addView(bar, new LinearLayout.LayoutParams(
+                dp(3), LinearLayout.LayoutParams.MATCH_PARENT));
+        row.addView(card, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        return row;
     }
 
     private static View buildCodeCard(Context ctx, Style style) {
@@ -422,7 +518,7 @@ public final class BubbleBuilder {
                     ctx.getSystemService(Context.CLIPBOARD_SERVICE);
             String code = (String) body.getText();
             cm.setPrimaryClip(ClipData.newPlainText("code", code));
-            copy.setText("⧉ 已复制");
+            copy.setText(ctx.getString(R.string.copy_copied));
             copy.setTag(code);
             Toast.makeText(ctx, ctx.getString(R.string.copied_clipboard), Toast.LENGTH_SHORT).show();
         });
@@ -433,6 +529,14 @@ public final class BubbleBuilder {
         GradientDrawable g = new GradientDrawable();
         g.setColor(color);
         g.setCornerRadius(radius);
+        return g;
+    }
+
+    /** 左边两角为直角：引用表格要贴着左侧竖线，圆角会露出缝。 */
+    private static GradientDrawable roundedLeftSquare(int color, int radius) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadii(new float[]{0, 0, radius, radius, radius, radius, 0, 0});
         return g;
     }
 
@@ -491,12 +595,16 @@ public final class BubbleBuilder {
         return sb;
     }
 
-    /** Renders the table as a real grid: one centered TextView per cell, equal
-     * width columns (weight 1, fills the bubble), bold header row with
-     * translucent background, alternating body rows and 1px horizontal
-     * separators between rows. */
+    /** Renders the table as a real grid: one left-aligned TextView per cell, column
+     * widths from the column's widest cell text (capped so one long path cannot
+     * stretch the table to several screens); the grid fills the viewport when it
+     * fits and scrolls horizontally when it does not. Bold header row with
+     * translucent background, alternating body rows and 1px separators. */
     private static void renderTableGrid(LinearLayout card, List<String[]> rows, Style style) {
-        card.removeAllViews();
+        if (card.getChildCount() == 0) return;             // 结构由 buildTableCard 建好
+        HorizontalScrollView hsv = (HorizontalScrollView) card.getChildAt(0);
+        LinearLayout gridView = (LinearLayout) hsv.getChildAt(0);
+        gridView.removeAllViews();
         if (rows == null || rows.isEmpty()) return;
         int cols = 0;
         for (String[] r : rows) cols = Math.max(cols, r.length);
@@ -505,31 +613,103 @@ public final class BubbleBuilder {
         int headerBg = 0x1AFFFFFF;
         int stripeBg = 0x0AFFFFFF;
 
+        final List<LinearLayout> lineViews = new ArrayList<>(rows.size());
+        final List<TextView[]> grid = new ArrayList<>(rows.size());
+        final float[] ideal = new float[cols];
         for (int ri = 0; ri < rows.size(); ri++) {
             String[] r = rows.get(ri);
             LinearLayout row = new LinearLayout(card.getContext());
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setBackgroundColor(ri == 0 ? headerBg : (ri % 2 == 0 ? stripeBg : 0x00000000));
+            TextView[] cells = new TextView[cols];
             for (int c = 0; c < cols; c++) {
+                String raw = c < r.length && r[c] != null ? r[c].trim() : "";
                 TextView cell = new TextView(card.getContext());
-                cell.setGravity(Gravity.CENTER);
+                cell.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
                 cell.setPadding(dp(8), dp(6), dp(8), dp(6));
                 cell.setTextSize(14);
                 cell.setTextColor(style.text);
-                cell.setText(renderCell(c < r.length && r[c] != null ? r[c] : ""));
+                cell.setText(renderCell(raw));
                 if (ri == 0) cell.setTypeface(Typeface.DEFAULT_BOLD);
-                LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
-                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-                row.addView(cell, cp);
+                cells[c] = cell;
+                // 用单元格自己的 paint 量宽度：字号、粗体、字体缩放都由 TextView 决定。
+                // 另起一个 TextPaint 会在系统字体缩放不是 1 时量偏小，把 2026-11-11
+                // 这种 token 拆成两行。
+                for (String token : raw.split("\\s+")) {
+                    ideal[c] = Math.max(ideal[c], cell.getPaint().measureText(token));
+                }
             }
-            card.addView(row, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
+            lineViews.add(row);
+            grid.add(cells);
+        }
+
+        // +dp(3)：正好等于 token 宽度时，字宽取整会差一像素把最后一个字挤到下一行
+        final int[] want = new int[cols];
+        for (int c = 0; c < cols; c++) {
+            want[c] = (int) Math.ceil(ideal[c]) + dp(8) * 2 + dp(3);
+        }
+        for (int ri = 0; ri < lineViews.size(); ri++) {
+            LinearLayout row = lineViews.get(ri);
+            TextView[] cells = grid.get(ri);
+            for (int c = 0; c < cols; c++) {
+                row.addView(cells[c], new LinearLayout.LayoutParams(
+                        want[c], LinearLayout.LayoutParams.WRAP_CONTENT));
+            }
+            gridView.addView(row, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT));
             if (ri < rows.size() - 1) {
                 View sep = new View(card.getContext());
                 sep.setBackgroundColor(style.border);
-                card.addView(sep, new LinearLayout.LayoutParams(
+                gridView.addView(sep, new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+            }
+        }
+        // 表格比视口窄时按比例铺满；比视口宽就保持自然宽度，交给 HorizontalScrollView。
+        hsv.post(() -> fitColumns(hsv, grid));
+    }
+
+    /** 按整格文本宽定量一次列宽（超宽格封顶，避免一条长路径把整表撑到几千像素）：
+     *  短列（1.2K、2026-11-11 22:03）一行放得下，长列按上限折行；放不下就横向滚动。 */
+    private static void fitColumns(HorizontalScrollView hsv, List<TextView[]> grid) {
+        final int avail = hsv.getWidth() - hsv.getPaddingLeft() - hsv.getPaddingRight();
+        if (avail <= 0 || grid.isEmpty()) return;
+        final int cols = grid.get(0).length;
+        final int cap = (int) (avail * 0.55f);
+        final int[] want = new int[cols];
+        for (TextView[] row : grid) {
+            for (int c = 0; c < cols; c++) {
+                final TextView cell = row[c];
+                final CharSequence t = cell.getText();
+                float w = cell.getPaint().measureText(t, 0, t.length());
+                want[c] = Math.max(want[c], Math.min((int) Math.ceil(w), cap));
+            }
+        }
+        int total = 0;
+        for (int c = 0; c < cols; c++) {
+            want[c] += dp(8) * 2 + dp(3);
+            total += want[c];
+        }
+
+        final int[] width = new int[cols];
+        if (total < avail) {
+            int used = 0;
+            for (int c = 0; c < cols; c++) {
+                width[c] = (int) ((long) avail * want[c] / total);
+                used += width[c];
+            }
+            width[cols - 1] += avail - used;
+        } else {
+            System.arraycopy(want, 0, width, 0, cols);   // 横向滚动
+        }
+
+        for (TextView[] row : grid) {
+            for (int c = 0; c < cols; c++) {
+                LinearLayout.LayoutParams lp =
+                        (LinearLayout.LayoutParams) row[c].getLayoutParams();
+                lp.width = width[c];
+                lp.weight = 0;
+                row[c].setLayoutParams(lp);
             }
         }
     }

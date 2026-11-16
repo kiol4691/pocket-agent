@@ -1,0 +1,47 @@
+{
+  "id": "ocean_theme",
+  "name": "Ocean",
+  "version": "0.1.1",
+  "apiVersion": 2,
+  "type": "theme",
+  "description": "示例主题：青绿品牌色 + 更圆的卡片 + 消息气泡皮肤（需要 render.match）。",
+  "description_en": "Sample theme: teal brand color, rounder cards, and a message-bubble skin (requires render.match).",
+  "author": "you",
+  "permissions": ["render.match"],
+  "contributes": {
+    "theme": {
+      "tokens": {
+        "color.bg": "#071417",
+        "color.surface": "#10262B",
+        "color.text": "#E8FAF7",
+        "color.textSecondary": "#A9D6D0",
+        "color.brand": "#57D3C8",
+        "color.codeBg": "#0B1E22",
+        "radius.card": 16,
+        "space.gutter": 18,
+        "font.body": 16,
+        "motion.duration": 180
+      },
+      "skins": [
+        {
+          "component": "message.bubble",
+          "view": {
+            "type": "card",
+            "tone": "surface",
+            "pad": "sm",
+            "radius": "lg",
+            "children": [
+              {
+                "type": "text",
+                "text": "{{theme.name}} · {{message.role}}",
+                "size": "caption",
+                "tone": "brand"
+              },
+              { "type": "divider" }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

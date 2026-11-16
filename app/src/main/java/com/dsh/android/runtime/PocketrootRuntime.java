@@ -94,7 +94,13 @@ public final class PocketrootRuntime extends ProrootRuntime {
         env.put("ZNG_LOG", new File(tmpDir, "zng.log").getAbsolutePath());
         // PATH 必须显式给：默认会继承 Android 的 PATH（/system/bin），guest 里那些路径不存在。
         // python3 在 /usr/local/bin（Debian 的 python 镜像装在 /usr/local）。
-        env.put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+        String path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+        // 用户可能在 workspace 里装了新版 Node（如 dsh 要求的 Node >= 24）：
+        // 存在 .local/node/bin/node 时放到 PATH 最前，node/npm/dsh 默认就用它。
+        if (new File(workspaceDir, ".local/node/bin/node").isFile()) {
+            path = "/root/workspace/.local/node/bin:" + path;
+        }
+        env.put("PATH", path);
         // Android 把 TMPDIR 指到 app 的 cache（宿主路径）；guest 里不存在，
         // dpkg-deb / apt 建临时目录必失败。固定到 guest 的 /tmp。
         env.put("TMPDIR", "/tmp");

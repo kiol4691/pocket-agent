@@ -73,6 +73,11 @@ public final class ChatMessage {
         return new ChatMessage("tool", content, null, toolCallId, null);
     }
 
+    /** 只替换正文，保留角色、附件、引用与 tool_calls（插件改写用户/助手消息用）。 */
+    public ChatMessage withContent(String newContent) {
+        return new ChatMessage(role, newContent, toolCalls, toolCallId, reasoning, imagePaths, refs);
+    }
+
     private JSONObject skeleton() throws JSONException {
         JSONObject o = new JSONObject();
         o.put("role", role);
